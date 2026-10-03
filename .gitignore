@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.DS_Store
+db.db
+db.db.wal
+tests/fixtures/sqlmesh_project/.cache/
+tests/fixtures/sqlmesh_project/logs/
+.dataveil/
+dist/
+build/
+
+# Internal planning doc -- not part of the published package.
+PLAN.md

@@ -1,0 +1,12 @@
+gateways:
+  duckdb:
+    connection:
+      type: duckdb
+      database: db.db
+
+default_gateway: duckdb
+
+model_defaults:
+  dialect: duckdb
+  start: 2024-01-01
+  cron: '@daily'

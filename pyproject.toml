@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dataveil"
+version = "0.1.0"
+description = "Local data profiling, PII classification, and plan-based cleansing — aggregate-only, no LLM-authored code."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Zain Ul Abdin" }]
+keywords = ["data-governance", "pii", "data-quality", "llm", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Database",
+    "Topic :: Security",
+]
+dependencies = []
+
+[project.optional-dependencies]
+duckdb = ["duckdb>=1.0.0", "numpy>=1.24"]
+sqlmesh = ["sqlmesh>=0.236.0"]
+postgres = ["sqlalchemy>=2.0.0", "psycopg2-binary>=2.9.0"]
+mcp = ["mcp>=2.0.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "duckdb>=1.0.0",
+    "numpy>=1.24",
+    "sqlmesh>=0.236.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
+    "mcp>=2.0.0",
+    "faker>=20.0.0",
+]
+
+[project.scripts]
+dataveil-mcp = "dataveil.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dataveil"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+# Longer than sqlmesh-mcp's 100: several lines here are generated SQL
+# f-strings that don't wrap cleanly.
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
