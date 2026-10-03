@@ -1,5 +1,8 @@
 # dataveil
 
+[![CI](https://github.com/Zain-ul-Abdin45/dataveil/actions/workflows/ci.yml/badge.svg)](https://github.com/Zain-ul-Abdin45/dataveil/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Local data profiling, PII classification, and plan-based cleansing.
 
 **Aggregate-only.** The LLM reasons over counts, rates, and generalized

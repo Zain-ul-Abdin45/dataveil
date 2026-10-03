@@ -42,6 +42,10 @@ dev = [
 [project.scripts]
 dataveil-mcp = "dataveil.server:main"
 
+[project.urls]
+Homepage = "https://github.com/Zain-ul-Abdin45/dataveil"
+Issues = "https://github.com/Zain-ul-Abdin45/dataveil/issues"
+
 [tool.hatch.build.targets.wheel]
 packages = ["dataveil"]
 

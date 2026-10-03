@@ -13,5 +13,6 @@ tests/fixtures/sqlmesh_project/logs/
 dist/
 build/
 
-# Internal planning doc -- not part of the published package.
+# Internal planning/notes docs -- not part of the published package.
 PLAN.md
+NEXT_STEPS.md
