@@ -1,0 +1,111 @@
+flowchart TB
+    %% ---------- Users / clients ----------
+    agent["LLM agent / MCP client<br/>(Claude Desktop, sqlmesh-mcp, ...)"]
+    human["Human reviewer<br/>(optional approval gate)"]
+    dev["Developer<br/>(library / CLI use)"]
+
+    %% ---------- Entry points ----------
+    subgraph entry["Entry points"]
+        direction LR
+        mcp_server["dataveil-mcp<br/>standalone MCP server<br/>dataveil/server.py"]
+        sqlmesh_mcp["sqlmesh-mcp<br/>tools: profile_model,<br/>propose_cleansing_plan,<br/>apply_cleansing_plan,<br/>register/approve_cleansing_plan"]
+        py_api["Python API<br/>import dataveil.core.*"]
+    end
+
+    agent -->|"tool calls (stdio)"| mcp_server
+    agent -->|"tool calls (stdio)"| sqlmesh_mcp
+    human -->|"approve_cleansing_plan"| sqlmesh_mcp
+    dev --> py_api
+
+    %% ---------- The three strictly separated stages ----------
+    subgraph stages["Core engine -- three stages, no LLM inside dataveil itself"]
+        direction LR
+        profile["1. Profile + classify<br/>core/profile.py<br/>core/classify.py<br/>(aggregate SQL only)"]
+        propose["2. Propose plan<br/>(the LLM -- outside this project)<br/>reasons over profile + classes"]
+        execute["3. Execute<br/>core/execute.py<br/>validate whole plan, then run"]
+    end
+
+    profile -->|"aggregate profile JSON<br/>(never raw values)"| propose
+    propose -->|"plan: list of<br/>{operation, column, params, rationale}"| execute
+
+    mcp_server --> profile
+    mcp_server --> execute
+    sqlmesh_mcp --> profile
+    sqlmesh_mcp --> execute
+    py_api --> profile
+    py_api --> execute
+
+    %% ---------- Shared core modules ----------
+    subgraph core["dataveil/core/ (adapter-agnostic)"]
+        direction TB
+        plan_mod["plan.py<br/>OPERATIONS vocabulary (8 ops)<br/>validate_plan, operation_vocabulary"]
+        coltypes["coltypes.py<br/>numeric / string type checks"]
+        sqlutil["sql.py<br/>quote_ident (dotted paths)"]
+        approval["approval.py<br/>PlanRegistry: register /<br/>approve / discard,<br/>execute_approved_plan"]
+        adapter_iface["adapter.py<br/>Adapter ABC<br/>(5 methods + checksum contract)"]
+    end
+
+    execute --> plan_mod
+    execute --> adapter_iface
+    profile --> adapter_iface
+    profile --> coltypes
+    profile --> sqlutil
+    profile --> plan_mod
+    execute --> approval
+    approval --> execute
+
+    %% ---------- Audit (called explicitly by integrations) ----------
+    audit["audit.py<br/>AuditLog (append-only JSONL)<br/>who / what / when, never values"]
+    mcp_server -.->|"record(...)"| audit
+    sqlmesh_mcp -.->|"record(...)"| audit
+
+    %% ---------- Adapters ----------
+    subgraph adapters["dataveil/adapters/"]
+        direction LR
+        duck["DuckDBAdapter<br/>reference impl<br/>Luhn/IBAN as Python UDFs"]
+        sqlm["SQLMeshAdapter<br/>reads: virtual layer<br/>writes: physical snapshot table"]
+        pg["PostgresAdapter<br/>SQLAlchemy Engine<br/>Luhn/IBAN as PL/pgSQL"]
+    end
+
+    adapter_iface -.->|implements| duck
+    adapter_iface -.->|implements| sqlm
+    adapter_iface -.->|implements| pg
+
+    mcp_server -->|"DATAVEIL_ADAPTER=duckdb"| duck
+    mcp_server -->|"DATAVEIL_ADAPTER=postgres"| pg
+    mcp_server -->|"DATAVEIL_ADAPTER=sqlmesh"| sqlm
+    sqlmesh_mcp --> sqlm
+
+    %% ---------- Underlying data systems ----------
+    duck_db[("DuckDB file / :memory:")]
+    pg_db[("PostgreSQL")]
+    sqlmesh_proj["SQLMesh project<br/>(Context, models, state)"]
+    sqlmesh_warehouse[("SQLMesh warehouse<br/>(DuckDB / other engine)")]
+
+    duck --> duck_db
+    pg --> pg_db
+    sqlm --> sqlmesh_proj
+    sqlmesh_proj --> sqlmesh_warehouse
+
+    %% ---------- Release / CI ----------
+    subgraph release["Delivery"]
+        direction LR
+        gh_ci["GitHub Actions CI<br/>ruff + pytest<br/>(Postgres service container)"]
+        gh_pub["GitHub Actions publish.yml<br/>triggered on release"]
+        pypi[("PyPI<br/>dataveil 0.1.0")]
+    end
+
+    gh_ci -.->|"on push / PR"| core
+    gh_pub -->|"trusted publishing (OIDC)"| pypi
+    pypi -->|"pip install dataveil[extra]"| sqlmesh_mcp
+    pypi -->|"pip install dataveil[extra]"| dev
+
+    %% ---------- Styling ----------
+    classDef stage fill:#eef6ff,stroke:#3b82f6
+    classDef adapter fill:#f0fdf4,stroke:#16a34a
+    classDef store fill:#fff7ed,stroke:#ea580c
+    classDef entry fill:#faf5ff,stroke:#9333ea
+    class profile,propose,execute stage
+    class duck,sqlm,pg adapter
+    class duck_db,pg_db,sqlmesh_warehouse,pypi store
+    class mcp_server,sqlmesh_mcp,py_api entry

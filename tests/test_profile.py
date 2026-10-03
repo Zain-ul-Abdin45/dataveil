@@ -48,10 +48,11 @@ def test_profile_shape(adapter, con):
     assert email_col.format_signatures is not None
     assert all("@" in s.signature for s in email_col.format_signatures)
 
+    # a 3-row table is below MIN_ROWS_FOR_NUMERIC_STATS, so numeric stats are withheld
     age_col = by_name["age"]
-    assert age_col.min == 29
-    assert age_col.max == 41
-    assert age_col.mean == 35
+    assert age_col.min is None
+    assert age_col.max is None
+    assert age_col.mean is None
 
 
 def test_profile_never_contains_literal_values(adapter, con):
@@ -87,3 +88,54 @@ def test_low_cardinality_column_still_not_enumerated(adapter, con):
         "distinct_count",
         "cardinality_ratio",
     }
+
+
+def _signatures(con, adapter, values, table="sig_t"):
+    con.execute(f"CREATE TABLE {table} (v VARCHAR)")
+    con.executemany(f"INSERT INTO {table} VALUES (?)", [[v] for v in values])
+    column = profile_table(adapter, table).to_dict()["columns"][0]
+    return sorted(s["signature"] for s in column["format_signatures"])
+
+
+def test_ssn_signature_keeps_digits_as_d(adapter, con):
+    assert _signatures(con, adapter, ["123-45-6789"]) == ["ddd-dd-dddd"]
+
+
+def test_letters_and_digits_are_distinct_placeholders(adapter, con):
+    assert _signatures(con, adapter, ["Abc1"]) == ["aaad"]
+
+
+def test_letter_case_is_folded(adapter, con):
+    assert _signatures(con, adapter, ["ALICE", "alice"]) == ["aaaaa"]
+
+
+def test_non_ascii_letters_fold_to_a(adapter, con):
+    assert _signatures(con, adapter, ["josé"]) == ["aaaa"]
+
+
+def test_punctuation_only_value_never_appears_verbatim(adapter, con):
+    assert _signatures(con, adapter, ["---"]) == ["<punctuation or whitespace only>"]
+
+
+def test_single_row_numeric_column_does_not_expose_its_value(adapter, con):
+    con.execute("CREATE TABLE one (amount DOUBLE)")
+    con.execute("INSERT INTO one VALUES (1234.5)")
+    column = profile_table(adapter, "one").to_dict()["columns"][0]
+    for key in ("min", "max", "mean", "p25", "p50", "p75"):
+        assert key not in column
+    assert "1234.5" not in json.dumps(column)
+
+
+def test_constant_numeric_column_does_not_expose_its_value(adapter, con):
+    con.execute("CREATE TABLE const (n INTEGER)")
+    con.executemany("INSERT INTO const VALUES (?)", [[42]] * 50)
+    column = profile_table(adapter, "const").to_dict()["columns"][0]
+    assert "min" not in column and "max" not in column
+
+
+def test_numeric_stats_returned_for_large_varied_columns(adapter, con):
+    con.execute("CREATE TABLE big (n INTEGER)")
+    con.executemany("INSERT INTO big VALUES (?)", [[i] for i in range(1, 21)])
+    column = profile_table(adapter, "big").to_dict()["columns"][0]
+    assert column["min"] == 1
+    assert column["max"] == 20

@@ -7,7 +7,8 @@ Local data profiling, PII classification, and plan-based cleansing.
 
 **Aggregate-only.** The LLM reasons over counts, rates, and generalized
 format signatures (`ddd-dd-dddd`, not an actual SSN), never raw values —
-not one row, not a "few examples."
+not one row, not a "few examples." There are edge cases where a value can
+still be inferred; see [Known limits](#known-limits).
 
 **No LLM-authored code, ever.** The LLM's only output is a plan: a list of
 `{operation, column, params, rationale}` picked from a closed, versioned
@@ -59,7 +60,7 @@ print(profile.to_dict())
 #       {'signature': 'aaa@aaaaaaa.aaa', 'count': 1},      # bob@example.com
 #       {'signature': 'aaaaa@aaaaaaa.aaa', 'count': 1},    # alice@example.com
 #   ]},
-#   {'name': 'signup_date', ..., 'format_signatures': [{'signature': 'aa/aa/aaaa', 'count': 3}]},
+#   {'name': 'signup_date', ..., 'format_signatures': [{'signature': 'dd/dd/dddd', 'count': 3}]},
 # ]}
 
 # 2. Classify -- local regex/checksum matching, same aggregate-only posture.
@@ -120,7 +121,9 @@ python examples/messy_customers.py
 ```
 
 `profile` surfaces the mess as aggregate stats (null rates, scattered
-format signatures like `'  aaaaa aaaaaa  '` vs `'AAAAA AAAAAA'`), `classify`
+format signatures such as `'  aaaaa aaaaaa  '` next to `'aaaaa aaaaaa'`, which
+show the stray whitespace; letter case is folded, so `'ALICE'` and `'alice'`
+both become `'aaaaa'`), `classify`
 flags the PII columns, and a 9-step plan (`trim_whitespace`,
 `standardize_case`, `mask`, `impute`, `parse_date`, `dedupe_rows`) cleans it
 up -- in the seeded run, 12 duplicate rows removed, every email/SSN masked,
@@ -150,6 +153,36 @@ aggregate `COUNT`s so matched values never leave the adapter:
 `PII:IBAN` (mod-97 checked). Free-text PII (names, addresses) needs NER, not
 regex, and is deliberately out of scope for v1.
 
+## Known limits
+
+The profile is aggregate-only, but aggregate does not always mean it cannot
+reveal a value. What the code does, and where it stops short:
+
+- **Numeric stats are withheld for small or constant columns.** `min`, `max`,
+  `mean`, `stddev` and the percentiles are only returned when the table has at
+  least 10 rows and the column at least 3 distinct values. Below that, a single
+  row could be recovered from them, so they are omitted entirely. The
+  thresholds are conservative heuristics, not a privacy guarantee.
+- **Large tables still return numeric extremes.** `min` and `max` are literal
+  cell values. On a big table they are the values of individual rows (the
+  largest salary, for example). Suppressing those would need a per-value
+  group-size check, which is not implemented.
+- **Format signatures are generalized, but some structure is kept.** Letters
+  become `a`, digits become `d`, and case is folded. Spaces and punctuation
+  stay, so `ddd-dd-dddd` is an SSN shape and `aaa@aaaaaaa.aaa` is an email
+  shape. Accented and other non-ASCII characters fold to `a`. A value made
+  only of punctuation or whitespace is replaced with
+  `<punctuation or whitespace only>`.
+- **Small tables give unreliable statistics**: match rates on a handful of
+  rows are noise (a single-row column is either 0.0 or 1.0), and no minimum
+  group size is enforced for categories or signatures.
+- **Classification is pattern-based**: regex and checksum matching will miss
+  personal identifiers written in an unusual format.
+
+So the guarantee is "no raw row is returned and no sample is taken, and
+single-value or constant numeric columns are withheld", not "no value can
+ever be inferred".
+
 ## Adapters
 
 | Adapter | Status | Notes |
@@ -171,7 +204,7 @@ adapter is supposed to surface.
 Used by [`sqlmesh-mcp`](https://github.com/Zain-ul-Abdin45/sqlmesh-mcp)'s
 `profile_model`/`propose_cleansing_plan`/`apply_cleansing_plan` tools — the
 first integration, not the whole project. Writing a new adapter means
-implementing `dataveil.core.adapter.Adapter`'s four methods; see that
+implementing `dataveil.core.adapter.Adapter`'s five methods; see that
 module's docstring for the contract.
 
 ## Audit logging and plan approval

@@ -119,7 +119,8 @@ def list_tables() -> list[str]:
 def profile(table: str) -> dict:
     """Aggregate-only profile of a table's columns: null rates, distinct
     counts, numeric stats, generalized string format signatures (e.g.
-    'ddd-dd-dddd'). Never returns a literal cell value.
+    'ddd-dd-dddd'). Returns no raw rows or samples; numeric stats are withheld
+    for small or constant columns. See README's Known limits.
     """
     adapter = get_adapter()
     result = profile_table(adapter, table).to_dict()

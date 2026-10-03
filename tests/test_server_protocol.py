@@ -47,9 +47,7 @@ async def test_apply_cleansing_plan_is_flagged_destructive_others_read_only(tmp_
 
 async def test_apply_cleansing_plan_without_confirm_is_a_tool_error_with_the_real_message(tmp_path):
     async with open_session(tmp_path / "test.duckdb") as session:
-        result = await session.call_tool(
-            "apply_cleansing_plan", {"table": "people", "plan": [], "confirm": False}
-        )
+        result = await session.call_tool("apply_cleansing_plan", {"table": "people", "plan": [], "confirm": False})
         assert result.is_error is True
         assert "confirm=true" in str(result.content)
 

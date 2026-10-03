@@ -1,16 +1,14 @@
 """Aggregate-only profiling.
 
 Every query built here is an aggregate: COUNT/MIN/MAX/AVG/STDDEV/quantiles,
-or a GROUP BY over a *generalized* format signature (digits/letters folded
-down to 'd'/'a' inside SQL, before anything comes back to this process) —
-never a raw value, never a sample of rows. See PLAN.md's "aggregate-only"
-rule and the adapter contract in adapter.py.
+or a GROUP BY over a *generalized* format signature (letters folded to 'a',
+digits to 'd', inside SQL before anything comes back to this process). A
+signature is never a raw value and no sample of rows is taken.
 
-Low-cardinality columns (booleans, small enums) are deliberately NOT given
-an exception to enumerate their literal values here, even though the whole
-domain of a 2-3 value column arguably isn't a leak — the structural
-guarantee ("no literal cell value ever appears in a profile") is kept
-absolute for v1. See PLAN.md's open questions.
+This is not a guarantee that no value can be inferred. Numeric extremes
+(min/max) are literal cell values, so they are suppressed for small or
+constant columns below; larger tables still return them. See README's
+"Known limits".
 """
 
 from __future__ import annotations
@@ -26,6 +24,14 @@ from .sql import quote_ident
 # string column — a format signature is not a raw value, but an unbounded
 # list of them for a high-cardinality column is still unnecessary detail.
 MAX_FORMAT_SIGNATURES = 20
+
+# Numeric stats are withheld unless the column has enough rows and enough
+# distinct values that no single row is trivially recoverable from them.
+# Conservative heuristics, not a privacy guarantee.
+MIN_ROWS_FOR_NUMERIC_STATS = 10
+MIN_DISTINCT_FOR_NUMERIC_STATS = 3
+
+NO_ALPHANUMERIC_SIGNATURE = "<punctuation or whitespace only>"
 
 
 @dataclasses.dataclass
@@ -133,7 +139,7 @@ def _profile_column(adapter: Adapter, table: str, name: str, type_name: str, row
         cardinality_ratio=cardinality_ratio,
     )
 
-    if is_numeric_type(type_name):
+    if is_numeric_type(type_name) and _numeric_stats_allowed(row_count, distinct_count):
         # The standard ordered-set aggregate syntax (not DuckDB's
         # QUANTILE_CONT(col, frac) shorthand) -- both DuckDB and Postgres
         # support this form, so profile_table works unmodified across adapters.
@@ -165,10 +171,24 @@ def _profile_column(adapter: Adapter, table: str, name: str, type_name: str, row
     return profile
 
 
+def _numeric_stats_allowed(row_count: int, distinct_count: int) -> bool:
+    return row_count >= MIN_ROWS_FOR_NUMERIC_STATS and distinct_count >= MIN_DISTINCT_FOR_NUMERIC_STATS
+
+
 def _format_signatures(adapter: Adapter, table: str, column: str) -> list[FormatSignature]:
     qt = quote_ident(table)
     qc = quote_ident(column)
-    signature_expr = f"regexp_replace(regexp_replace(CAST({qc} AS VARCHAR), '[0-9]', 'd', 'g'), '[A-Za-z]', 'a', 'g')"
+    value = f"CAST({qc} AS VARCHAR)"
+    # Folding order matters: letters become 'a' before digits become 'd',
+    # otherwise the 'd' placeholders are themselves folded to 'a'. Anything
+    # outside printable ASCII (accents, non-Latin scripts) also folds to 'a'.
+    generalized = (
+        f"regexp_replace(regexp_replace(regexp_replace({value}, '[^ -~]', 'a', 'g'), "
+        f"'[A-Za-z]', 'a', 'g'), '[0-9]', 'd', 'g')"
+    )
+    # Anchored on purpose: DuckDB's ~ is a full-string match while Postgres's
+    # is a substring match, so only anchored patterns behave the same on both.
+    signature_expr = f"CASE WHEN {generalized} ~ '^[^ad]*$' THEN '{NO_ALPHANUMERIC_SIGNATURE}' ELSE {generalized} END"
     rows = adapter.run_aggregate_query(
         f"SELECT {signature_expr} AS signature, COUNT(*) AS n FROM {qt} "
         f"WHERE {qc} IS NOT NULL GROUP BY signature ORDER BY n DESC LIMIT {MAX_FORMAT_SIGNATURES}"

@@ -87,9 +87,7 @@ def test_profile_never_contains_literal_values(adapter, engine, table):
 def test_classify_email_and_checksum_backed_classifiers(adapter, engine, table):
     assert adapter.has_checksum_functions() is True
     with engine.begin() as conn:
-        conn.execute(
-            sa.text(f'CREATE TABLE "{table}" (contact_email TEXT, card_number TEXT, iban TEXT)')
-        )
+        conn.execute(sa.text(f'CREATE TABLE "{table}" (contact_email TEXT, card_number TEXT, iban TEXT)'))
         conn.execute(
             sa.text(f'INSERT INTO "{table}" VALUES (:e, :c, :i)'),
             [{"e": "a@example.com", "c": VALID_VISA, "i": VALID_IBAN}],
@@ -110,11 +108,7 @@ def test_date_column_not_misclassified(adapter, engine, table):
 
 def test_execute_plan_runs_core_operations(adapter, engine, table):
     with engine.begin() as conn:
-        conn.execute(
-            sa.text(
-                f'CREATE TABLE "{table}" (name TEXT, email TEXT, age INTEGER, joined TEXT, ssn TEXT)'
-            )
-        )
+        conn.execute(sa.text(f'CREATE TABLE "{table}" (name TEXT, email TEXT, age INTEGER, joined TEXT, ssn TEXT)'))
         conn.execute(
             sa.text(f'INSERT INTO "{table}" VALUES (:n, :e, :a, :j, :s)'),
             [
@@ -202,3 +196,32 @@ def test_unknown_operation_rejected_before_any_write(adapter, engine, table):
     # the valid first step must not have run either
     value = adapter.run_aggregate_query(f'SELECT name FROM "{table}"')[0]["name"]
     assert value == "bob"
+
+
+def test_format_signatures_match_duckdb_behaviour(adapter, engine, table):
+    """DuckDB's ~ is a full-string match and Postgres's is a substring match,
+    so signature generalization is only portable if its patterns are anchored.
+    These cases pin down the behaviour the DuckDB tests check."""
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE TABLE "{table}" (v TEXT)'))
+        conn.execute(
+            sa.text(f'INSERT INTO "{table}" VALUES (:v)'),
+            [{"v": "123-45-6789"}, {"v": "ALICE josé"}, {"v": "---"}, {"v": "Abc1"}],
+        )
+    signatures = {s["signature"] for s in profile_table(adapter, table).to_dict()["columns"][0]["format_signatures"]}
+    assert signatures == {
+        "ddd-dd-dddd",
+        "aaaaa aaaa",
+        "<punctuation or whitespace only>",
+        "aaad",
+    }
+    assert "---" not in signatures
+
+
+def test_numeric_stats_withheld_for_single_row_table(adapter, engine, table):
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE TABLE "{table}" (amount DOUBLE PRECISION)'))
+        conn.execute(sa.text(f'INSERT INTO "{table}" VALUES (1234.5)'))
+    column = profile_table(adapter, table).to_dict()["columns"][0]
+    assert "min" not in column and "max" not in column
+    assert "1234.5" not in json.dumps(column)
