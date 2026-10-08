@@ -9,6 +9,9 @@ change behavior).
 
 ### Security
 
+- `min` and `max` are only returned when at least 5 rows share that exact
+  value (`MIN_EXTREME_COUNT`). Before, a large table returned them even when
+  they were a single row's value, such as the largest salary.
 - A format signature is only returned when at least 5 non-null values share it
   (`MIN_SIGNATURE_COUNT`). Rarer signatures, and any beyond the first 20, are
   reported together as `<other signatures>` with their total count. Before,

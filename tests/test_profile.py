@@ -1,6 +1,12 @@
 import json
 
-from dataveil.core.profile import MAX_FORMAT_SIGNATURES, MIN_SIGNATURE_COUNT, OTHER_SIGNATURES, profile_table
+from dataveil.core.profile import (
+    MAX_FORMAT_SIGNATURES,
+    MIN_EXTREME_COUNT,
+    MIN_SIGNATURE_COUNT,
+    OTHER_SIGNATURES,
+    profile_table,
+)
 
 LITERAL_EMAIL = "alice.wonderland@example.com"
 LITERAL_SSN = "123-45-6789"
@@ -136,11 +142,34 @@ def test_constant_numeric_column_does_not_expose_its_value(adapter, con):
 
 
 def test_numeric_stats_returned_for_large_varied_columns(adapter, con):
+    # 1 and 20 are each shared by MIN_EXTREME_COUNT rows, so both are returned
+    values = [1] * MIN_EXTREME_COUNT + list(range(2, 20)) + [20] * MIN_EXTREME_COUNT
     con.execute("CREATE TABLE big (n INTEGER)")
-    con.executemany("INSERT INTO big VALUES (?)", [[i] for i in range(1, 21)])
+    con.executemany("INSERT INTO big VALUES (?)", [[v] for v in values])
     column = profile_table(adapter, "big").to_dict()["columns"][0]
     assert column["min"] == 1
     assert column["max"] == 20
+    assert {"mean", "stddev", "p25", "p50", "p75"} <= set(column)
+
+
+def test_unique_extremes_are_withheld(adapter, con):
+    # 1..20 once each: the min (1) and max (20) each belong to a single row
+    con.execute("CREATE TABLE unique_extremes (n INTEGER)")
+    con.executemany("INSERT INTO unique_extremes VALUES (?)", [[i] for i in range(1, 21)])
+    column = profile_table(adapter, "unique_extremes").to_dict()["columns"][0]
+    assert "min" not in column
+    assert "max" not in column
+    assert column["p50"] == 10.5  # the other stats are still returned
+
+
+def test_only_the_unique_extreme_is_withheld(adapter, con):
+    # many rows at 18 (a shared lower bound), one outlier at the top
+    values = [18] * MIN_EXTREME_COUNT + list(range(19, 40)) + [250_000]
+    con.execute("CREATE TABLE salaries (n INTEGER)")
+    con.executemany("INSERT INTO salaries VALUES (?)", [[v] for v in values])
+    column = profile_table(adapter, "salaries").to_dict()["columns"][0]
+    assert column["min"] == 18
+    assert "max" not in column
 
 
 def _signature_counts(con, adapter, values, table="sig_counts"):
