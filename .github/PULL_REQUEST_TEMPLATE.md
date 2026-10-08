@@ -9,3 +9,4 @@
 - [ ] No raw values can leave `profile`/`classify` (see [CONTRIBUTING](../CONTRIBUTING.md#design-rules)), or this is explained below
 - [ ] No real personal data in tests, fixtures or this description
 - [ ] README updated if behavior or the operation vocabulary changed
+- [ ] `CHANGELOG.md` updated under `[Unreleased]` (if users would notice the change)
