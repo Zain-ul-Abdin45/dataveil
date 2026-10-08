@@ -24,6 +24,10 @@ change behavior).
 
 ### Changed
 
+- The README and the audit log docs state the privacy guarantee precisely:
+  no raw rows or samples are returned, and some aggregates (for example
+  `min`/`max` on a large table) can still reveal a value. Before, the README
+  opened with "never raw values", which the Known limits section contradicted.
 - The package passes `mypy --strict`. Public functions return precise types
   (for example `dict[str, Any]` instead of a bare `dict`).
 

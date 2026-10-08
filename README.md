@@ -5,10 +5,11 @@
 
 Local data profiling, PII classification, and plan-based cleansing.
 
-**Aggregate-only.** The LLM reasons over counts, rates, and generalized
-format signatures (`ddd-dd-dddd`, not an actual SSN), never raw values —
-not one row, not a "few examples." There are edge cases where a value can
-still be inferred; see [Known limits](#known-limits).
+**Aggregate-only, with documented limits.** The LLM reasons over counts,
+rates, and generalized format signatures (`ddd-dd-dddd`, not an actual SSN).
+No raw rows or samples are returned — not one row, not a "few examples."
+Some aggregates can still reveal a value (for example `min`/`max` on a large
+table); see [Known limits](#known-limits).
 
 **No LLM-authored code, ever.** The LLM's only output is a plan: a list of
 `{operation, column, params, rationale}` picked from a closed, versioned
@@ -51,7 +52,7 @@ con.executemany(
 )
 adapter = DuckDBAdapter(con)
 
-# 1. Profile -- aggregate stats only, never a literal value.
+# 1. Profile -- aggregate stats only, no raw rows or samples (see Known limits).
 profile = profile_table(adapter, "customers")
 print(profile.to_dict())
 # {'table': 'customers', 'row_count': 3, 'columns': [
@@ -219,8 +220,10 @@ module's docstring for the contract.
 
 `dataveil.audit.AuditLog` is an append-only JSON-lines log — one entry per
 profile/classify/execute call, with a timestamp and enough detail to
-reconstruct what happened without re-running anything, never a literal cell
-value. It's a reusable component, not wired automatically into every core
+reconstruct what happened without re-running anything. `record()` stores
+whatever detail the caller passes: dataveil's MCP server logs row counts,
+tags and plans, not cell values, but a caller that logs a full profile also
+logs its numeric stats (see Known limits). It's a reusable component, not wired automatically into every core
 call: whichever integration drives this (sqlmesh-mcp's tools, a future
 standalone server) calls `log.record(...)` around the calls it wants logged.
 
