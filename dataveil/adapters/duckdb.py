@@ -15,49 +15,10 @@ from typing import TYPE_CHECKING, Any
 
 from ..core.adapter import Adapter
 from ..core.sql import quote_ident as _quote_ident
+from ._checksums import iban_valid, luhn_valid
 
 if TYPE_CHECKING:
     import duckdb as duckdb_module
-
-
-def _luhn_valid(value: str | None) -> bool:
-    if value is None:
-        return False
-    digits = [c for c in value if c.isdigit()]
-    if len(digits) < 2:
-        return False
-    total = 0
-    for i, d in enumerate(reversed(digits)):
-        n = int(d)
-        if i % 2 == 1:
-            n *= 2
-            if n > 9:
-                n -= 9
-        total += n
-    return total % 10 == 0
-
-
-def _iban_valid(value: str | None) -> bool:
-    if value is None:
-        return False
-    s = value.replace(" ", "").upper()
-    if not (5 <= len(s) <= 34):
-        return False
-    if not s[:2].isalpha() or not s[2:4].isdigit():
-        return False
-    rearranged = s[4:] + s[:4]
-    numeric_chars = []
-    for ch in rearranged:
-        if ch.isdigit():
-            numeric_chars.append(ch)
-        elif ch.isalpha():
-            numeric_chars.append(str(ord(ch) - ord("A") + 10))
-        else:
-            return False
-    try:
-        return int("".join(numeric_chars)) % 97 == 1
-    except ValueError:
-        return False
 
 
 def _title_case(value: str | None) -> str | None:
@@ -69,8 +30,8 @@ def _title_case(value: str | None) -> str | None:
 class DuckDBAdapter(Adapter):
     def __init__(self, connection: "duckdb_module.DuckDBPyConnection"):
         self._con = connection
-        self._con.create_function("dataveil_luhn_valid", _luhn_valid, [str], bool)
-        self._con.create_function("dataveil_iban_valid", _iban_valid, [str], bool)
+        self._con.create_function("dataveil_luhn_valid", luhn_valid, [str], bool)
+        self._con.create_function("dataveil_iban_valid", iban_valid, [str], bool)
         self._con.create_function("dataveil_title_case", _title_case, [str], str)
 
     def run_aggregate_query(self, sql: str) -> list[dict[str, Any]]:

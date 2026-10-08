@@ -196,7 +196,7 @@ ever be inferred".
 | Adapter | Status | Notes |
 |---|---|---|
 | `dataveil.adapters.duckdb.DuckDBAdapter` | Reference implementation | All 8 operations; registers Luhn/IBAN checksum UDFs, so every classifier works |
-| `dataveil.adapters.sqlmesh.SQLMeshAdapter` | First real-world integration | Reads through a model's virtual layer, writes to its physical snapshot table; no checksum UDFs (backend-agnostic), so credit-card/IBAN classifiers are skipped for this adapter |
+| `dataveil.adapters.sqlmesh.SQLMeshAdapter` | First real-world integration | Reads through a model's virtual layer, writes to its physical snapshot table; registers the checksum functions on DuckDB and Postgres projects, so every classifier works there; on other engines the credit-card/IBAN classifiers are skipped |
 | `dataveil.adapters.postgres.PostgresAdapter` | Second adapter, proves the interface holds outside SQLMesh | Plain SQLAlchemy `Engine`, no Context/virtual-layer split; checksum functions written in PL/pgSQL (no Python UDFs), so every classifier works here too |
 
 Building the Postgres adapter is what caught two real dialect-coupling bugs

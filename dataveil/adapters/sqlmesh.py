@@ -21,12 +21,12 @@ cleansing -- it was never written into the model's SQL definition. Making
 cleansing durable across reruns (e.g. by folding the operation into the
 model's SQL itself) is deliberately out of scope for v1; see PLAN.md Phase 5.
 
-No checksum functions are registered: a SQLMesh project can point at any
-backend engine (DuckDB, Snowflake, BigQuery, ...), and registering a Python
-UDF portably across all of them is out of scope for v1. The credit-card and
-IBAN classifiers are simply not considered for this adapter (see
-adapter.py's contract) -- the regex-only classifiers (email, SSN, phone)
-still work normally.
+Checksum functions: when the project's engine is DuckDB or Postgres, the
+adapter registers the same ``dataveil_luhn_valid``/``dataveil_iban_valid``
+functions as the DuckDB and Postgres adapters, so the credit-card and IBAN
+classifiers work. On any other engine (Snowflake, BigQuery, ...) none are
+registered and those two classifiers are skipped (see adapter.py's contract);
+the regex-only classifiers (email, SSN, phone) work everywhere.
 """
 
 from __future__ import annotations
@@ -37,14 +37,38 @@ from sqlmesh.utils.errors import SQLMeshError
 
 from ..core.adapter import Adapter
 from ..core.sql import quote_ident
+from ._checksums import IBAN_FUNCTION_SQL, LUHN_FUNCTION_SQL, iban_valid, luhn_valid
 
 if TYPE_CHECKING:
     from sqlmesh.core.context import Context
 
 
 class SQLMeshAdapter(Adapter):
-    def __init__(self, context: "Context"):
+    def __init__(self, context: "Context", *, register_checksum_functions: bool = True):
         self._ctx = context
+        self._has_checksum = register_checksum_functions and self._register_checksum_functions()
+
+    def _register_checksum_functions(self) -> bool:
+        engine = self._ctx.engine_adapter
+        if engine.dialect == "duckdb":
+            import duckdb
+
+            # SQLMesh shares one DuckDB connection across threads (and reuses it
+            # for another Context on the same database), so a UDF registered
+            # here is visible to every later query, and may already exist.
+            connection = engine.connection
+            for name, function in (("dataveil_luhn_valid", luhn_valid), ("dataveil_iban_valid", iban_valid)):
+                try:
+                    connection.remove_function(name)
+                except duckdb.InvalidInputException:
+                    pass  # not registered yet
+                connection.create_function(name, function, [str], bool)
+            return True
+        if engine.dialect == "postgres":
+            engine.execute(LUHN_FUNCTION_SQL)
+            engine.execute(IBAN_FUNCTION_SQL)
+            return True
+        return False
 
     def run_aggregate_query(self, sql: str) -> list[dict[str, Any]]:
         try:
@@ -68,7 +92,7 @@ class SQLMeshAdapter(Adapter):
         return {col: str(dtype) for col, dtype in (model.columns_to_types or {}).items()}
 
     def has_checksum_functions(self) -> bool:
-        return False
+        return self._has_checksum
 
     def _physical_table(self, table: str) -> str:
         model = self._ctx.get_model(table, raise_if_missing=True)

@@ -28,76 +28,10 @@ import sqlalchemy as sa
 
 from ..core.adapter import Adapter
 from ..core.sql import quote_ident
+from ._checksums import IBAN_FUNCTION_SQL, LUHN_FUNCTION_SQL
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
-
-_LUHN_FUNCTION_SQL = """
-CREATE OR REPLACE FUNCTION dataveil_luhn_valid(value TEXT) RETURNS BOOLEAN AS $$
-DECLARE
-    digits TEXT;
-    total INT := 0;
-    n INT;
-    i INT;
-    d CHAR;
-BEGIN
-    IF value IS NULL THEN
-        RETURN FALSE;
-    END IF;
-    digits := regexp_replace(value, '[^0-9]', '', 'g');
-    IF length(digits) < 2 THEN
-        RETURN FALSE;
-    END IF;
-    FOR i IN 1..length(digits) LOOP
-        d := substr(digits, length(digits) - i + 1, 1);
-        n := d::INT;
-        IF i % 2 = 0 THEN
-            n := n * 2;
-            IF n > 9 THEN
-                n := n - 9;
-            END IF;
-        END IF;
-        total := total + n;
-    END LOOP;
-    RETURN total % 10 = 0;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-"""
-
-_IBAN_FUNCTION_SQL = """
-CREATE OR REPLACE FUNCTION dataveil_iban_valid(value TEXT) RETURNS BOOLEAN AS $$
-DECLARE
-    s TEXT;
-    rearranged TEXT;
-    numeric_str TEXT := '';
-    ch CHAR;
-    i INT;
-BEGIN
-    IF value IS NULL THEN
-        RETURN FALSE;
-    END IF;
-    s := upper(replace(value, ' ', ''));
-    IF length(s) < 5 OR length(s) > 34 THEN
-        RETURN FALSE;
-    END IF;
-    IF NOT (substr(s, 1, 2) ~ '^[A-Z]{2}$') OR NOT (substr(s, 3, 2) ~ '^[0-9]{2}$') THEN
-        RETURN FALSE;
-    END IF;
-    rearranged := substr(s, 5) || substr(s, 1, 4);
-    FOR i IN 1..length(rearranged) LOOP
-        ch := substr(rearranged, i, 1);
-        IF ch ~ '[0-9]' THEN
-            numeric_str := numeric_str || ch;
-        ELSIF ch ~ '[A-Z]' THEN
-            numeric_str := numeric_str || (ascii(ch) - ascii('A') + 10)::TEXT;
-        ELSE
-            RETURN FALSE;
-        END IF;
-    END LOOP;
-    RETURN (numeric_str::NUMERIC % 97) = 1;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-"""
 
 _STRFTIME_TO_POSTGRES = {
     "%Y": "YYYY",
@@ -142,8 +76,8 @@ class PostgresAdapter(Adapter):
         self._has_checksum = False
         if register_checksum_functions:
             with self._engine.begin() as conn:
-                conn.execute(sa.text(_LUHN_FUNCTION_SQL))
-                conn.execute(sa.text(_IBAN_FUNCTION_SQL))
+                conn.execute(sa.text(LUHN_FUNCTION_SQL))
+                conn.execute(sa.text(IBAN_FUNCTION_SQL))
             self._has_checksum = True
 
     def run_aggregate_query(self, sql: str) -> list[dict[str, Any]]:
