@@ -72,14 +72,13 @@ def get_adapter() -> Adapter:
 
         from .adapters.sqlmesh import SQLMeshAdapter
 
-        path = os.environ.get("SQLMESH_PROJECT_PATH")
-        if not path:
+        project_path = os.environ.get("SQLMESH_PROJECT_PATH")
+        if not project_path:
             raise AdapterNotConfiguredError("SQLMESH_PROJECT_PATH is not set")
-        return SQLMeshAdapter(Context(paths=path))
+        return SQLMeshAdapter(Context(paths=project_path))
 
     raise AdapterNotConfiguredError(
-        "DATAVEIL_ADAPTER is not set (or is unrecognized) -- must be one of "
-        "'duckdb', 'postgres', 'sqlmesh'"
+        "DATAVEIL_ADAPTER is not set (or is unrecognized) -- must be one of 'duckdb', 'postgres', 'sqlmesh'"
     )
 
 
@@ -147,9 +146,7 @@ def propose_cleansing_plan(table: str) -> dict:
     adapter = get_adapter()
     profile_result = profile_table(adapter, table)
     classifications = classify_table(adapter, table)
-    _audit_log().record(
-        "classify", table, {"tags": {c.column: c.tag for c in classifications}}
-    )
+    _audit_log().record("classify", table, {"tags": {c.column: c.tag for c in classifications}})
     return {
         "table": table,
         "profile": profile_result.to_dict(),

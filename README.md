@@ -102,8 +102,12 @@ A plan referencing anything outside the vocabulary is rejected before
 from dataveil.core.plan import PlanValidationError
 
 try:
-    execute_plan(adapter, "customers", [{"operation": "drop_table", "column": "email",
-                                          "params": {}, "rationale": "x"}], confirm=True)
+    execute_plan(
+        adapter,
+        "customers",
+        [{"operation": "drop_table", "column": "email", "params": {}, "rationale": "x"}],
+        confirm=True,
+    )
 except PlanValidationError as e:
     print(e)  # "step 0: unknown operation 'drop_table'; must be one of [...]"
 ```
