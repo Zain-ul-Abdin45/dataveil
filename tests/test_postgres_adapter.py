@@ -21,7 +21,7 @@ from dataveil.adapters.postgres import PostgresAdapter  # noqa: E402
 from dataveil.core.classify import classify_table  # noqa: E402
 from dataveil.core.execute import execute_plan  # noqa: E402
 from dataveil.core.plan import PlanValidationError  # noqa: E402
-from dataveil.core.profile import profile_table  # noqa: E402
+from dataveil.core.profile import MIN_SIGNATURE_COUNT, profile_table  # noqa: E402
 
 TEST_DB_URL = os.environ.get("DATAVEIL_TEST_POSTGRES_URL", "postgresql+psycopg2://localhost/dataveil_test")
 
@@ -206,7 +206,7 @@ def test_format_signatures_match_duckdb_behaviour(adapter, engine, table):
         conn.execute(sa.text(f'CREATE TABLE "{table}" (v TEXT)'))
         conn.execute(
             sa.text(f'INSERT INTO "{table}" VALUES (:v)'),
-            [{"v": "123-45-6789"}, {"v": "ALICE josé"}, {"v": "---"}, {"v": "Abc1"}],
+            [{"v": v} for v in ["123-45-6789", "ALICE josé", "---", "Abc1"] for _ in range(MIN_SIGNATURE_COUNT)],
         )
     signatures = {s["signature"] for s in profile_table(adapter, table).to_dict()["columns"][0]["format_signatures"]}
     assert signatures == {

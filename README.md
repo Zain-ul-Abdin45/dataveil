@@ -56,12 +56,12 @@ profile = profile_table(adapter, "customers")
 print(profile.to_dict())
 # {'table': 'customers', 'row_count': 3, 'columns': [
 #   ...,
-#   {'name': 'email', ..., 'format_signatures': [
-#       {'signature': 'aaa@aaaaaaa.aaa', 'count': 1},      # bob@example.com
-#       {'signature': 'aaaaa@aaaaaaa.aaa', 'count': 1},    # alice@example.com
-#   ]},
-#   {'name': 'signup_date', ..., 'format_signatures': [{'signature': 'dd/dd/dddd', 'count': 3}]},
+#   {'name': 'email', ..., 'format_signatures': [{'signature': '<other signatures>', 'count': 2}]},
+#   {'name': 'signup_date', ..., 'format_signatures': [{'signature': '<other signatures>', 'count': 3}]},
 # ]}
+# A signature is only shown when at least 5 values share it (MIN_SIGNATURE_COUNT);
+# on a 3-row table every shape is rare. On a larger table you get shapes such
+# as {'signature': 'dd/dd/dddd', 'count': 312} -- see the messier example below.
 
 # 2. Classify -- local regex/checksum matching, same aggregate-only posture.
 for result in classify_table(adapter, "customers"):
@@ -177,9 +177,13 @@ reveal a value. What the code does, and where it stops short:
   shape. Accented and other non-ASCII characters fold to `a`. A value made
   only of punctuation or whitespace is replaced with
   `<punctuation or whitespace only>`.
+- **Rare format signatures are grouped.** A signature is only returned when at
+  least `MIN_SIGNATURE_COUNT` (5) non-null values share it. Rarer ones, and
+  any beyond the first 20, are counted together as `<other signatures>`. The
+  bucket's count can still be small, so it can tell you that a few values have
+  an unusual shape, but not what that shape is.
 - **Small tables give unreliable statistics**: match rates on a handful of
-  rows are noise (a single-row column is either 0.0 or 1.0), and no minimum
-  group size is enforced for categories or signatures.
+  rows are noise (a single-row column is either 0.0 or 1.0).
 - **Classification is pattern-based**: regex and checksum matching will miss
   personal identifiers written in an unusual format.
 
