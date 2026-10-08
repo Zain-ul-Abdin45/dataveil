@@ -59,6 +59,8 @@ available. Look at `dataveil/adapters/postgres.py` as an example.
 
 - Open an issue first for anything larger than a small fix.
 - Keep one change per pull request, and add a test that fails without it.
+- Add a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for any
+  change a user would notice.
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for the
   title: `fix: ...`, `feat: ...`, `docs: ...`, `chore: ...`, `test: ...`.
 - Never use real personal data in tests, issues or pull requests. Use
