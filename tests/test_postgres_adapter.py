@@ -237,3 +237,47 @@ def test_unique_numeric_extreme_is_withheld(adapter, engine, table):
     assert column["min"] == 18
     assert "max" not in column
     assert "p50" in column
+
+
+def test_dbt_adapter_on_postgres(adapter, engine, tmp_path):
+    """DbtAdapter reads column types from information_schema, which names them
+    differently on Postgres (character varying, integer)."""
+    from dataveil.adapters.dbt import DbtAdapter
+
+    schema = f"dv_dbt_{uuid.uuid4().hex[:8]}"
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "nodes": {
+                    "model.shop.payments": {
+                        "resource_type": "model",
+                        "name": "payments",
+                        "schema": schema,
+                        "alias": "payments",
+                        "config": {"materialized": "table"},
+                    }
+                }
+            }
+        )
+    )
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+        conn.execute(sa.text(f'CREATE TABLE "{schema}".payments (id INTEGER, card_number VARCHAR(32), iban TEXT)'))
+        conn.execute(
+            sa.text(f'INSERT INTO "{schema}".payments VALUES (:i, :c, :b)'),
+            [{"i": i, "c": VALID_VISA, "b": VALID_IBAN} for i in range(5)],
+        )
+    try:
+        dbt = DbtAdapter(manifest, adapter)
+        assert dbt.get_schema(f"{schema}.payments") == {
+            "id": "integer",
+            "card_number": "character varying",
+            "iban": "text",
+        }
+        tags = {r.column: r.tag for r in classify_table(dbt, f"{schema}.payments")}
+        assert tags["card_number"] == "PII:CREDIT_CARD"
+        assert tags["iban"] == "PII:IBAN"
+    finally:
+        with engine.begin() as conn:
+            conn.execute(sa.text(f'DROP SCHEMA "{schema}" CASCADE'))
