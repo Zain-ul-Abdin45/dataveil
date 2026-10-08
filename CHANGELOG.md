@@ -7,6 +7,13 @@ change behavior).
 
 ## [Unreleased]
 
+### Security
+
+- A format signature is only returned when at least 5 non-null values share it
+  (`MIN_SIGNATURE_COUNT`). Rarer signatures, and any beyond the first 20, are
+  reported together as `<other signatures>` with their total count. Before,
+  a signature with count 1 described a single row.
+
 ### Added
 
 - `py.typed` marker, so type checkers use dataveil's type hints.

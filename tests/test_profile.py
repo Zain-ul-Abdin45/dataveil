@@ -1,6 +1,6 @@
 import json
 
-from dataveil.core.profile import profile_table
+from dataveil.core.profile import MAX_FORMAT_SIGNATURES, MIN_SIGNATURE_COUNT, OTHER_SIGNATURES, profile_table
 
 LITERAL_EMAIL = "alice.wonderland@example.com"
 LITERAL_SSN = "123-45-6789"
@@ -45,8 +45,8 @@ def test_profile_shape(adapter, con):
     assert email_col.null_count == 1
     assert email_col.null_rate == 1 / 3
     assert email_col.distinct_count == 2
-    assert email_col.format_signatures is not None
-    assert all("@" in s.signature for s in email_col.format_signatures)
+    # 2 emails, each with its own shape: both are below MIN_SIGNATURE_COUNT
+    assert [s.to_dict() for s in email_col.format_signatures] == [{"signature": OTHER_SIGNATURES, "count": 2}]
 
     # a 3-row table is below MIN_ROWS_FOR_NUMERIC_STATS, so numeric stats are withheld
     age_col = by_name["age"]
@@ -91,8 +91,10 @@ def test_low_cardinality_column_still_not_enumerated(adapter, con):
 
 
 def _signatures(con, adapter, values, table="sig_t"):
+    # Each value is inserted MIN_SIGNATURE_COUNT times, so its signature is
+    # common enough to be returned. These tests check how a signature is built.
     con.execute(f"CREATE TABLE {table} (v VARCHAR)")
-    con.executemany(f"INSERT INTO {table} VALUES (?)", [[v] for v in values])
+    con.executemany(f"INSERT INTO {table} VALUES (?)", [[v] for v in values for _ in range(MIN_SIGNATURE_COUNT)])
     column = profile_table(adapter, table).to_dict()["columns"][0]
     return sorted(s["signature"] for s in column["format_signatures"])
 
@@ -139,3 +141,29 @@ def test_numeric_stats_returned_for_large_varied_columns(adapter, con):
     column = profile_table(adapter, "big").to_dict()["columns"][0]
     assert column["min"] == 1
     assert column["max"] == 20
+
+
+def _signature_counts(con, adapter, values, table="sig_counts"):
+    con.execute(f"CREATE TABLE {table} (v VARCHAR)")
+    con.executemany(f"INSERT INTO {table} VALUES (?)", [[v] for v in values])
+    column = profile_table(adapter, table).to_dict()["columns"][0]
+    return {s["signature"]: s["count"] for s in column["format_signatures"]}
+
+
+def test_rare_signature_is_reported_only_in_the_other_bucket(adapter, con):
+    values = ["123-45-6789"] * MIN_SIGNATURE_COUNT + ["bob@example.com", None]
+    assert _signature_counts(con, adapter, values) == {"ddd-dd-dddd": MIN_SIGNATURE_COUNT, OTHER_SIGNATURES: 1}
+
+
+def test_only_the_other_bucket_when_every_signature_is_rare(adapter, con):
+    values = ["alice@example.com", "bob@example.com", "123-45-6789"]
+    assert _signature_counts(con, adapter, values) == {OTHER_SIGNATURES: 3}
+
+
+def test_signatures_beyond_the_limit_go_to_the_other_bucket(adapter, con):
+    # MAX_FORMAT_SIGNATURES + 1 common signatures: "d", "dd", "ddd", ...
+    values = ["1" * length for length in range(1, MAX_FORMAT_SIGNATURES + 2) for _ in range(MIN_SIGNATURE_COUNT)]
+    counts = _signature_counts(con, adapter, values)
+    assert len(counts) == MAX_FORMAT_SIGNATURES + 1
+    assert counts[OTHER_SIGNATURES] == MIN_SIGNATURE_COUNT
+    assert sum(counts.values()) == len(values)

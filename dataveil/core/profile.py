@@ -33,6 +33,13 @@ MIN_DISTINCT_FOR_NUMERIC_STATS = 3
 
 NO_ALPHANUMERIC_SIGNATURE = "<punctuation or whitespace only>"
 
+# A signature shared by only a few rows describes those rows (one person's
+# email shape, for example), so it is only returned when at least this many
+# non-null values have it. Rarer signatures are reported together as one
+# bucket with their total count.
+MIN_SIGNATURE_COUNT = 5
+OTHER_SIGNATURES = "<other signatures>"
+
 
 @dataclasses.dataclass
 class FormatSignature:
@@ -166,7 +173,7 @@ def _profile_column(adapter: Adapter, table: str, name: str, type_name: str, row
         profile.min_length = length_stats["min_length"]
         profile.max_length = length_stats["max_length"]
         profile.avg_length = length_stats["avg_length"]
-        profile.format_signatures = _format_signatures(adapter, table, name)
+        profile.format_signatures = _format_signatures(adapter, table, name, row_count - null_count)
 
     return profile
 
@@ -175,7 +182,7 @@ def _numeric_stats_allowed(row_count: int, distinct_count: int) -> bool:
     return row_count >= MIN_ROWS_FOR_NUMERIC_STATS and distinct_count >= MIN_DISTINCT_FOR_NUMERIC_STATS
 
 
-def _format_signatures(adapter: Adapter, table: str, column: str) -> list[FormatSignature]:
+def _format_signatures(adapter: Adapter, table: str, column: str, non_null_count: int) -> list[FormatSignature]:
     qt = quote_ident(table)
     qc = quote_ident(column)
     value = f"CAST({qc} AS VARCHAR)"
@@ -189,8 +196,16 @@ def _format_signatures(adapter: Adapter, table: str, column: str) -> list[Format
     # Anchored on purpose: DuckDB's ~ is a full-string match while Postgres's
     # is a substring match, so only anchored patterns behave the same on both.
     signature_expr = f"CASE WHEN {generalized} ~ '^[^ad]*$' THEN '{NO_ALPHANUMERIC_SIGNATURE}' ELSE {generalized} END"
+    # HAVING drops rare signatures inside the database, so they never reach
+    # this process. ORDER BY signature makes ties deterministic.
     rows = adapter.run_aggregate_query(
         f"SELECT {signature_expr} AS signature, COUNT(*) AS n FROM {qt} "
-        f"WHERE {qc} IS NOT NULL GROUP BY signature ORDER BY n DESC LIMIT {MAX_FORMAT_SIGNATURES}"
+        f"WHERE {qc} IS NOT NULL GROUP BY signature HAVING COUNT(*) >= {MIN_SIGNATURE_COUNT} "
+        f"ORDER BY n DESC, signature LIMIT {MAX_FORMAT_SIGNATURES}"
     )
-    return [FormatSignature(signature=r["signature"], count=r["n"]) for r in rows]
+    signatures = [FormatSignature(signature=r["signature"], count=r["n"]) for r in rows]
+    # Values with a rare signature, or beyond MAX_FORMAT_SIGNATURES.
+    other_count = non_null_count - sum(s.count for s in signatures)
+    if other_count > 0:
+        signatures.append(FormatSignature(signature=OTHER_SIGNATURES, count=other_count))
+    return signatures
