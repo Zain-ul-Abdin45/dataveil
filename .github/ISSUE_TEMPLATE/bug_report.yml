@@ -1,0 +1,37 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Privacy leaks are security issues.** If a profile, classification or log contains a raw value, do not file it here: follow [SECURITY.md](https://github.com/Zain-ul-Abdin45/dataveil/blob/main/SECURITY.md).
+        Never paste real personal data. Use synthetic values.
+  - type: input
+    id: version
+    attributes:
+      label: dataveil version
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Adapter
+      options: [DuckDB, Postgres, SQLMesh, MCP server, Other / not adapter-specific]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: A minimal script with a synthetic table is best.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true

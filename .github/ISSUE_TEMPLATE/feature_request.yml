@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose an operation, classifier, adapter or other change.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can you not do today? For a new operation, show the plan that needs it.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+    validations:
+      required: true
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Design rules
+      options:
+        - label: The proposal keeps profiles aggregate-only and the plan vocabulary closed (see CONTRIBUTING.md).
+          required: true
