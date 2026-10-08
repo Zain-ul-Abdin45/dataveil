@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import functools
 import os
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -38,7 +39,13 @@ from .core.execute import ExecutionError, execute_plan
 from .core.plan import PlanValidationError, operation_vocabulary
 from .core.profile import profile_table
 
+P = ParamSpec("P")
+R = TypeVar("R")
+
 server = MCPServer("dataveil")
+
+# Tools that return dict[str, Any] pass structured_output=False: without it the
+# SDK derives an output schema from the annotation and changes what clients receive.
 
 
 class AdapterNotConfiguredError(RuntimeError):
@@ -87,7 +94,7 @@ def _audit_log() -> AuditLog:
     return AuditLog(os.environ.get("DATAVEIL_AUDIT_LOG_PATH", str(default_path)))
 
 
-def _translate_errors(fn):
+def _translate_errors(fn: Callable[P, R]) -> Callable[P, R]:
     """Without this, the MCP SDK replaces any exception that isn't a
     ToolError with the generic "Error executing tool <name>", dropping the
     real message. PlanValidationError/ExecutionError are the operation
@@ -97,7 +104,7 @@ def _translate_errors(fn):
     """
 
     @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return fn(*args, **kwargs)
         except (PlanValidationError, ExecutionError, ValueError, AdapterNotConfiguredError) as e:
@@ -113,9 +120,9 @@ def list_tables() -> list[str]:
     return get_adapter().list_tables()
 
 
-@server.tool(annotations=ToolAnnotations(read_only_hint=True))
+@server.tool(annotations=ToolAnnotations(read_only_hint=True), structured_output=False)
 @_translate_errors
-def profile(table: str) -> dict:
+def profile(table: str) -> dict[str, Any]:
     """Aggregate-only profile of a table's columns: null rates, distinct
     counts, numeric stats, generalized string format signatures (e.g.
     'ddd-dd-dddd'). Returns no raw rows or samples; numeric stats are withheld
@@ -127,9 +134,9 @@ def profile(table: str) -> dict:
     return result
 
 
-@server.tool(annotations=ToolAnnotations(read_only_hint=True))
+@server.tool(annotations=ToolAnnotations(read_only_hint=True), structured_output=False)
 @_translate_errors
-def propose_cleansing_plan(table: str) -> dict:
+def propose_cleansing_plan(table: str) -> dict[str, Any]:
     """Everything an agent needs to propose a data-cleansing plan for a
     table: the aggregate-only profile, a local sensitivity classification
     per column (PII:EMAIL, PII:SSN, PII:PHONE, ... or "none", each with a
@@ -155,9 +162,9 @@ def propose_cleansing_plan(table: str) -> dict:
     }
 
 
-@server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+@server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True), structured_output=False)
 @_translate_errors
-def apply_cleansing_plan(table: str, plan: list[dict], confirm: bool = False) -> dict:
+def apply_cleansing_plan(table: str, plan: list[dict[str, Any]], confirm: bool = False) -> dict[str, Any]:
     """Validate and apply a data-cleansing plan built from
     propose_cleansing_plan's output. THIS CHANGES REAL DATA via the
     configured adapter. Requires confirm=true.

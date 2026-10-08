@@ -22,6 +22,11 @@ change behavior).
 - `make check` (lint, format check, mypy, tests), pre-commit hooks, and CI on
   Python 3.13.
 
+### Changed
+
+- The package passes `mypy --strict`. Public functions return precise types
+  (for example `dict[str, Any]` instead of a bare `dict`).
+
 ## [0.2.0] - 2026-10-03
 
 ### Fixed

@@ -15,6 +15,7 @@ past v1 (see PLAN.md's open questions).
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
 from .adapter import Adapter
 from .coltypes import is_string_type
@@ -82,7 +83,7 @@ class ClassificationResult:
     tag: str
     match_rate: float
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {"column": self.column, "tag": self.tag, "match_rate": self.match_rate}
 
 

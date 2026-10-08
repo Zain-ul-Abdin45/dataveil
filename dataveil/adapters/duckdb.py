@@ -100,7 +100,8 @@ class DuckDBAdapter(Adapter):
         method = getattr(self, f"_op_{operation}", None)
         if method is None:
             raise ValueError(f"adapter does not implement operation {operation!r}")
-        return method(table, column, params)
+        result: dict[str, Any] = method(table, column, params)
+        return result
 
     # --- operations ---
 
