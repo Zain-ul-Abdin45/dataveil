@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.12"]
+        python-version: ["3.10", "3.12", "3.13"]
     services:
       postgres:
         image: postgres:16
@@ -32,6 +32,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: ruff check dataveil tests examples
+      - run: ruff format --check dataveil tests examples
+      - run: mypy dataveil
       - run: psql -h localhost -U postgres -c "CREATE DATABASE dataveil_test;"
       - run: pytest
       - run: python examples/messy_customers.py

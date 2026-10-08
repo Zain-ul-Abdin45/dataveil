@@ -150,9 +150,7 @@ class PostgresAdapter(Adapter):
         with self._engine.connect() as conn:
             result = conn.execute(sa.text(sql))
             columns = list(result.keys())
-            return [
-                {col: _to_jsonable(value) for col, value in zip(columns, row)} for row in result.fetchall()
-            ]
+            return [{col: _to_jsonable(value) for col, value in zip(columns, row)} for row in result.fetchall()]
 
     def list_tables(self) -> list[str]:
         return sa.inspect(self._engine).get_table_names()
@@ -246,9 +244,7 @@ class PostgresAdapter(Adapter):
         keys = ", ".join(quote_ident(k) for k in params["key_columns"])
         before = self.run_aggregate_query(f"SELECT COUNT(*) AS n FROM {t}")[0]["n"]
         with self._engine.begin() as conn:
-            conn.execute(
-                sa.text(f"DELETE FROM {t} WHERE ctid NOT IN (SELECT MIN(ctid) FROM {t} GROUP BY {keys})")
-            )
+            conn.execute(sa.text(f"DELETE FROM {t} WHERE ctid NOT IN (SELECT MIN(ctid) FROM {t} GROUP BY {keys})"))
         after = self.run_aggregate_query(f"SELECT COUNT(*) AS n FROM {t}")[0]["n"]
         return {"rows_removed": before - after}
 
@@ -282,8 +278,7 @@ class PostgresAdapter(Adapter):
         with self._engine.begin() as conn:
             conn.execute(
                 sa.text(
-                    f"UPDATE {t} SET {c} = to_char(to_timestamp(CAST({c} AS TEXT), :src), :tgt) "
-                    f"WHERE {c} IS NOT NULL"
+                    f"UPDATE {t} SET {c} = to_char(to_timestamp(CAST({c} AS TEXT), :src), :tgt) WHERE {c} IS NOT NULL"
                 ),
                 {"src": source_format, "tgt": target_format},
             )
