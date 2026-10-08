@@ -6,9 +6,9 @@ digits to 'd', inside SQL before anything comes back to this process). A
 signature is never a raw value and no sample of rows is taken.
 
 This is not a guarantee that no value can be inferred. Numeric extremes
-(min/max) are literal cell values, so they are suppressed for small or
-constant columns below; larger tables still return them. See README's
-"Known limits".
+(min/max) are literal cell values, so all numeric stats are suppressed for
+small or constant columns, and min/max are only returned when enough rows
+share them. See README's "Known limits".
 """
 
 from __future__ import annotations
@@ -30,6 +30,11 @@ MAX_FORMAT_SIGNATURES = 20
 # Conservative heuristics, not a privacy guarantee.
 MIN_ROWS_FOR_NUMERIC_STATS = 10
 MIN_DISTINCT_FOR_NUMERIC_STATS = 3
+
+# min and max are literal cell values. One is only returned when at least this
+# many rows have that exact value, so a unique outlier (one person's salary)
+# is withheld, while a shared bound (age 18 for many rows) is kept.
+MIN_EXTREME_COUNT = 5
 
 NO_ALPHANUMERIC_SIGNATURE = "<punctuation or whitespace only>"
 
@@ -150,12 +155,20 @@ def _profile_column(adapter: Adapter, table: str, name: str, type_name: str, row
         # The standard ordered-set aggregate syntax (not DuckDB's
         # QUANTILE_CONT(col, frac) shorthand) -- both DuckDB and Postgres
         # support this form, so profile_table works unmodified across adapters.
+        # The MIN_EXTREME_COUNT check runs in SQL, so a withheld extreme never
+        # leaves the database.
         stats = adapter.run_aggregate_query(
-            f"SELECT MIN({qc}) AS min, MAX({qc}) AS max, AVG({qc}) AS mean, STDDEV({qc}) AS stddev, "
-            f"PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY {qc}) AS p25, "
-            f"PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY {qc}) AS p50, "
-            f"PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY {qc}) AS p75 "
-            f"FROM {qt} WHERE {qc} IS NOT NULL"
+            f"WITH v AS (SELECT {qc} AS x FROM {qt} WHERE {qc} IS NOT NULL), "
+            f"e AS (SELECT MIN(x) AS lo, MAX(x) AS hi FROM v), "
+            f"c AS (SELECT SUM(CASE WHEN v.x = e.lo THEN 1 ELSE 0 END) AS lo_n, "
+            f"SUM(CASE WHEN v.x = e.hi THEN 1 ELSE 0 END) AS hi_n FROM v CROSS JOIN e), "
+            f"s AS (SELECT AVG(x) AS mean, STDDEV(x) AS stddev, "
+            f"PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY x) AS p25, "
+            f"PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x) AS p50, "
+            f"PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY x) AS p75 FROM v) "
+            f"SELECT CASE WHEN c.lo_n >= {MIN_EXTREME_COUNT} THEN e.lo END AS min, "
+            f"CASE WHEN c.hi_n >= {MIN_EXTREME_COUNT} THEN e.hi END AS max, "
+            f"s.mean, s.stddev, s.p25, s.p50, s.p75 FROM e CROSS JOIN c CROSS JOIN s"
         )[0]
         profile.min = stats["min"]
         profile.max = stats["max"]

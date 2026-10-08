@@ -5,8 +5,8 @@ without re-running anything.
 An entry contains whatever detail the caller passes to record(). dataveil's
 MCP server logs row counts, classification tags and plans (operation
 references and configuration an agent proposed), not cell values. A caller
-that logs a full profile also logs its numeric min/max, which can be literal
-cell values on large tables (see README "Known limits").
+that logs a full profile also logs its numeric stats, which can equal cell
+values (see README "Known limits").
 
 This is a reusable component, not something wired automatically into every
 core/ call: core/profile.py, classify.py, execute.py stay pure (adapter in,

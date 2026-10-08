@@ -21,7 +21,7 @@ from dataveil.adapters.postgres import PostgresAdapter  # noqa: E402
 from dataveil.core.classify import classify_table  # noqa: E402
 from dataveil.core.execute import execute_plan  # noqa: E402
 from dataveil.core.plan import PlanValidationError  # noqa: E402
-from dataveil.core.profile import MIN_SIGNATURE_COUNT, profile_table  # noqa: E402
+from dataveil.core.profile import MIN_EXTREME_COUNT, MIN_SIGNATURE_COUNT, profile_table  # noqa: E402
 
 TEST_DB_URL = os.environ.get("DATAVEIL_TEST_POSTGRES_URL", "postgresql+psycopg2://localhost/dataveil_test")
 
@@ -225,3 +225,15 @@ def test_numeric_stats_withheld_for_single_row_table(adapter, engine, table):
     column = profile_table(adapter, table).to_dict()["columns"][0]
     assert "min" not in column and "max" not in column
     assert "1234.5" not in json.dumps(column)
+
+
+def test_unique_numeric_extreme_is_withheld(adapter, engine, table):
+    """Same rule as the DuckDB tests: min/max only when MIN_EXTREME_COUNT rows share it."""
+    values = [18] * MIN_EXTREME_COUNT + list(range(19, 40)) + [250_000]
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE TABLE "{table}" (n INTEGER)'))
+        conn.execute(sa.text(f'INSERT INTO "{table}" VALUES (:n)'), [{"n": v} for v in values])
+    column = profile_table(adapter, table).to_dict()["columns"][0]
+    assert column["min"] == 18
+    assert "max" not in column
+    assert "p50" in column
