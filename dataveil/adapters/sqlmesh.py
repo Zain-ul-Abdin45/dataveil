@@ -57,7 +57,8 @@ class SQLMeshAdapter(Adapter):
                 f"query against the SQLMesh project failed -- if the model "
                 f"hasn't been applied yet, apply a plan first: {e}"
             ) from e
-        return df.to_dict(orient="records")
+        records: list[dict[str, Any]] = df.to_dict(orient="records")
+        return records
 
     def list_tables(self) -> list[str]:
         return [model.name for model in self._ctx.models.values()]
@@ -92,7 +93,8 @@ class SQLMeshAdapter(Adapter):
         if method is None:
             raise ValueError(f"adapter does not implement operation {operation!r}")
         physical = self._physical_table(table)
-        return method(physical, column, params)
+        result: dict[str, Any] = method(physical, column, params)
+        return result
 
     # --- operations: same SQL shapes as adapters/duckdb.py, issued through
     # ctx.engine_adapter.execute() against the resolved physical table ---
