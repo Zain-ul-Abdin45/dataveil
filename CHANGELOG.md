@@ -16,6 +16,10 @@ change behavior).
 
 ### Added
 
+- The SQLMesh adapter registers the Luhn and IBAN checksum functions when the
+  project runs on DuckDB or Postgres, so the credit-card and IBAN classifiers
+  work there. Other engines skip them as before. Pass
+  `register_checksum_functions=False` to turn this off.
 - `py.typed` marker, so type checkers use dataveil's type hints.
 - Contributor guide (`CONTRIBUTING.md`), security policy (`SECURITY.md`),
   pull request template and issue forms.
