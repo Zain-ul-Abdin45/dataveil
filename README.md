@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Zain-ul-Abdin45/dataveil/main/assets/logo.png" alt="dataveil logo" width="140">
+</p>
+
 # dataveil
 
 [![CI](https://github.com/Zain-ul-Abdin45/dataveil/actions/workflows/ci.yml/badge.svg)](https://github.com/Zain-ul-Abdin45/dataveil/actions/workflows/ci.yml)
