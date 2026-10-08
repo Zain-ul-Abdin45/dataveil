@@ -19,6 +19,9 @@ change behavior).
 
 ### Added
 
+- `DbtAdapter` for dbt projects: lists the models from dbt's
+  `target/manifest.json` and runs SQL through a DuckDB or Postgres adapter.
+  No dbt dependency.
 - The SQLMesh adapter registers the Luhn and IBAN checksum functions when the
   project runs on DuckDB or Postgres, so the credit-card and IBAN classifiers
   work there. Other engines skip them as before. Pass

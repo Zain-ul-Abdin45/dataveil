@@ -204,6 +204,21 @@ inferred".
 | `dataveil.adapters.duckdb.DuckDBAdapter` | Reference implementation | All 8 operations; registers Luhn/IBAN checksum UDFs, so every classifier works |
 | `dataveil.adapters.sqlmesh.SQLMeshAdapter` | First real-world integration | Reads through a model's virtual layer, writes to its physical snapshot table; registers the checksum functions on DuckDB and Postgres projects, so every classifier works there; on other engines the credit-card/IBAN classifiers are skipped |
 | `dataveil.adapters.postgres.PostgresAdapter` | Second adapter, proves the interface holds outside SQLMesh | Plain SQLAlchemy `Engine`, no Context/virtual-layer split; checksum functions written in PL/pgSQL (no Python UDFs), so every classifier works here too |
+| `dataveil.adapters.dbt.DbtAdapter` | dbt projects | Lists the models from dbt's `target/manifest.json` as `schema.alias` and runs SQL through a DuckDB or Postgres adapter on the same database, so every classifier works; dbt itself is not imported. Views cannot be cleansed, and the next `dbt run` rebuilds a cleansed table model |
+
+For a dbt project, point the adapter at the manifest that `dbt run` (or
+`dbt compile`) writes, and at the warehouse dbt built into:
+
+```python
+import duckdb
+from dataveil.adapters.dbt import DbtAdapter
+from dataveil.adapters.duckdb import DuckDBAdapter
+from dataveil.core.profile import profile_table
+
+adapter = DbtAdapter("target/manifest.json", DuckDBAdapter(duckdb.connect("shop.duckdb")))
+adapter.list_tables()  # ['main_analytics.customers', ...]
+profile_table(adapter, "main_analytics.customers")
+```
 
 Building the Postgres adapter is what caught two real dialect-coupling bugs
 in `core/`: `classify.py` was built against DuckDB's `regexp_matches()`
