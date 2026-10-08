@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 from ..core.adapter import Adapter
 from ..core.sql import quote_ident as _quote_ident
 from ._checksums import iban_valid, luhn_valid
+from ._duckdb_udf import replace_function
+from ._ner import ner_available, ner_label
 
 if TYPE_CHECKING:
     import duckdb as duckdb_module
@@ -28,11 +30,14 @@ def _title_case(value: str | None) -> str | None:
 
 
 class DuckDBAdapter(Adapter):
-    def __init__(self, connection: "duckdb_module.DuckDBPyConnection"):
+    def __init__(self, connection: "duckdb_module.DuckDBPyConnection", *, register_ner_function: bool = True):
         self._con = connection
-        self._con.create_function("dataveil_luhn_valid", luhn_valid, [str], bool)
-        self._con.create_function("dataveil_iban_valid", iban_valid, [str], bool)
-        self._con.create_function("dataveil_title_case", _title_case, [str], str)
+        replace_function(self._con, "dataveil_luhn_valid", luhn_valid, bool)
+        replace_function(self._con, "dataveil_iban_valid", iban_valid, bool)
+        replace_function(self._con, "dataveil_title_case", _title_case, str)
+        self._has_ner = register_ner_function and ner_available()
+        if self._has_ner:
+            replace_function(self._con, "dataveil_ner_label", ner_label, str)
 
     def run_aggregate_query(self, sql: str) -> list[dict[str, Any]]:
         cursor = self._con.execute(sql)
@@ -54,6 +59,9 @@ class DuckDBAdapter(Adapter):
 
     def has_checksum_functions(self) -> bool:
         return True
+
+    def has_ner_function(self) -> bool:
+        return self._has_ner
 
     def execute_operation(
         self, table: str, operation: str, column: str | None, params: dict[str, Any]

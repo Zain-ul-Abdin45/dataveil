@@ -9,6 +9,7 @@ help: ## Show this help
 setup: ## Create .venv and install dataveil with all dev extras
 	python3 -m venv .venv
 	$(PY) -m pip install -e ".[dev]"
+	$(PY) -m spacy download en_core_web_sm
 	$(PY) -m pre_commit install
 
 format: ## Format the code with ruff

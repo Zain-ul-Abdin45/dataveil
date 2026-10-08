@@ -26,6 +26,10 @@ Contract an adapter must uphold, not just implement:
 
   An adapter that does not register them simply won't get those two
   classifiers considered (see ``classify.py``'s capability check).
+- The free-text name classifier works the same way, with one optional SQL
+  function: ``dataveil_ner_label(value TEXT) -> TEXT``, returning a named
+  entity label such as ``'PERSON'``, or ``''``. An adapter that registers it
+  returns ``True`` from ``has_ner_function()``.
 """
 
 from __future__ import annotations
@@ -58,6 +62,10 @@ class Adapter(abc.ABC):
     @abc.abstractmethod
     def has_checksum_functions(self) -> bool:
         """Whether dataveil_luhn_valid/dataveil_iban_valid are registered."""
+
+    def has_ner_function(self) -> bool:
+        """Whether dataveil_ner_label is registered. Optional: False by default."""
+        return False
 
     @abc.abstractmethod
     def execute_operation(

@@ -1,5 +1,6 @@
 import json
 
+from dataveil.adapters.duckdb import DuckDBAdapter
 from dataveil.core.classify import classify_column, classify_table
 
 VALID_VISA = "4111111111111111"  # passes Luhn
@@ -98,3 +99,12 @@ def test_classify_results_never_contain_literal_values(adapter, con):
     serialized = json.dumps([r.to_dict() for r in results])
     assert "secret.person@example.com" not in serialized
     assert VALID_VISA not in serialized
+
+
+def test_two_adapters_on_one_connection(con):
+    # registering the UDFs a second time on the same connection used to fail
+    DuckDBAdapter(con)
+    second = DuckDBAdapter(con)
+    con.execute("CREATE TABLE cards (card_number VARCHAR)")
+    con.executemany("INSERT INTO cards VALUES (?)", [["4111111111111111"]] * 3)
+    assert classify_column(second, "cards", "card_number").tag == "PII:CREDIT_CARD"
