@@ -259,10 +259,12 @@ there's no SQLMesh Context or physical-snapshot concept here.
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-ruff check dataveil tests examples
-pytest
+make setup    # .venv + ".[dev]" + pre-commit hook
+make check    # lint, format check, mypy, tests (same as CI)
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the design rules and the pull
+request process, and [SECURITY.md](SECURITY.md) to report a privacy leak.
 
 The `sqlmesh` extra pulls in real SQLMesh; `tests/test_sqlmesh_adapter.py`
 runs the `SQLMeshAdapter` end to end against a small, self-contained SQLMesh
