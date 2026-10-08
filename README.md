@@ -22,6 +22,10 @@ anything outside that vocabulary is rejected before it ever executes.
 pip install dataveil[duckdb]    # core + the DuckDB reference adapter
 pip install dataveil[sqlmesh]   # core + the SQLMesh adapter
 pip install dataveil[postgres]  # core + the Postgres adapter
+
+# optional: recognize person names (PII:PERSON_NAME) with a local spaCy model
+pip install "dataveil[duckdb,ner]"
+python -m spacy download en_core_web_sm
 ```
 
 The core engine (`dataveil.core`) has no dependencies of its own — an
@@ -155,8 +159,14 @@ checked by `validate_plan`/`execute_plan` before anything runs.
 Local, deterministic pattern + checksum matching (Presidio-style), run as
 aggregate `COUNT`s so matched values never leave the adapter:
 `PII:EMAIL`, `PII:SSN`, `PII:PHONE`, `PII:CREDIT_CARD` (Luhn-checked),
-`PII:IBAN` (mod-97 checked). Free-text PII (names, addresses) needs NER, not
-regex, and is deliberately out of scope for v1.
+`PII:IBAN` (mod-97 checked).
+
+`PII:PERSON_NAME` needs the optional `ner` extra and spaCy's small English
+model (`en_core_web_sm`, MIT, runs offline). The model labels each distinct
+value inside the database engine, as a DuckDB function, so only a count
+reaches dataveil's core. It works on the DuckDB adapter and on SQLMesh or dbt
+projects that run on DuckDB; Postgres cannot run Python functions, so it is
+skipped there. Addresses are not classified yet.
 
 ## Known limits
 
@@ -191,6 +201,13 @@ reveal a value. What the code does, and where it stops short:
   rows are noise (a single-row column is either 0.0 or 1.0).
 - **Classification is pattern-based**: regex and checksum matching will miss
   personal identifiers written in an unusual format.
+- **Name recognition is a statistical model**: `en_core_web_sm` is English
+  only and misses some names (in a test it found 9 of 10 short names, missing
+  "María García"). It labels a column's 10,000 most frequent distinct values
+  (`NER_MAX_DISTINCT_VALUES`), so on a larger column the match rate is an
+  estimate from those values. Like the checksum functions, the model reads
+  each value inside the adapter's process; the values are not stored or
+  returned.
 
 So the guarantee is "no raw row is returned and no sample is taken, small or
 constant numeric columns are withheld, and `min`, `max` and format signatures

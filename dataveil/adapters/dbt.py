@@ -68,6 +68,9 @@ class DbtAdapter(Adapter):
     def has_checksum_functions(self) -> bool:
         return self._warehouse.has_checksum_functions()
 
+    def has_ner_function(self) -> bool:
+        return self._warehouse.has_ner_function()
+
     def execute_operation(
         self, table: str, operation: str, column: str | None, params: dict[str, Any]
     ) -> dict[str, Any]:

@@ -7,9 +7,12 @@ ever reaches this module is a match count and a non-null count; no matched
 value, nor any other value, crosses into Python here.
 
 The starting set follows the well-established Presidio pattern set (email,
-phone, SSN, credit card, IBAN) rather than inventing new regexes — free-text
-PII (names, addresses) needs NER, not regex, and is deliberately deferred
-past v1 (see PLAN.md's open questions).
+phone, SSN, credit card, IBAN) rather than inventing new regexes. Person
+names need NER, not regex: the ``PII:PERSON_NAME`` classifier calls the
+adapter's optional ``dataveil_ner_label`` function (see adapter.py), once
+per distinct value, for the ``NER_MAX_DISTINCT_VALUES`` most frequent values.
+Its match rate is computed over the rows those values cover. Addresses are
+not classified yet.
 """
 
 from __future__ import annotations
@@ -28,13 +31,18 @@ MATCH_THRESHOLD = 0.8
 # Lower bar used when the column name itself also hints at the tag.
 NAME_HINT_THRESHOLD = 0.5
 
+# The NER model is slow (hundreds of values per second), so it only labels
+# this many of a column's most frequent distinct values.
+NER_MAX_DISTINCT_VALUES = 10_000
+
 
 @dataclasses.dataclass(frozen=True)
 class Classifier:
     tag: str
-    pattern: str
+    pattern: str | None
     name_hints: tuple[str, ...]
     requires_checksum: str | None = None  # "luhn" | "iban" | None
+    ner_label: str | None = None  # e.g. "PERSON": matched by dataveil_ner_label, not a regex
 
 
 CLASSIFIERS: tuple[Classifier, ...] = (
@@ -71,6 +79,12 @@ CLASSIFIERS: tuple[Classifier, ...] = (
         pattern=r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{10,30}$",
         name_hints=("iban",),
         requires_checksum="iban",
+    ),
+    Classifier(
+        tag="PII:PERSON_NAME",
+        pattern=None,
+        name_hints=("name", "customer", "contact", "person"),
+        ner_label="PERSON",
     ),
 )
 
@@ -116,6 +130,16 @@ def _classify_column(adapter: Adapter, table: str, column: str, column_type: str
     for clf in CLASSIFIERS:
         if clf.requires_checksum and not adapter.has_checksum_functions():
             continue
+        if clf.ner_label is not None:
+            if not adapter.has_ner_function():
+                continue
+            match_rate = _ner_match_rate(adapter, qt, qc, clf.ner_label)
+            name_hinted = any(hint in column.lower() for hint in clf.name_hints)
+            threshold = NAME_HINT_THRESHOLD if name_hinted else MATCH_THRESHOLD
+            if match_rate >= threshold and match_rate > best_rate:
+                best_tag, best_rate = clf.tag, match_rate
+            continue
+        assert clf.pattern is not None
 
         # The '~' POSIX match operator (not the regexp_matches() function) --
         # DuckDB and Postgres both support it as a boolean predicate, but
@@ -139,6 +163,23 @@ def _classify_column(adapter: Adapter, table: str, column: str, column_type: str
             best_tag, best_rate = clf.tag, match_rate
 
     return ClassificationResult(column=column, tag=best_tag, match_rate=best_rate)
+
+
+def _ner_match_rate(adapter: Adapter, qt: str, qc: str, label: str) -> float:
+    """Share of rows whose value has the given entity label.
+
+    The model runs once per distinct value, for the NER_MAX_DISTINCT_VALUES
+    most frequent ones; the rate is over the rows those values cover. Only
+    the two counts come back.
+    """
+    row = adapter.run_aggregate_query(
+        f"SELECT SUM(n) FILTER (WHERE dataveil_ner_label(v) = '{_escape_sql_literal(label)}') AS matched, "
+        f"SUM(n) AS covered FROM ("
+        f"SELECT CAST({qc} AS VARCHAR) AS v, COUNT(*) AS n FROM {qt} WHERE {qc} IS NOT NULL "
+        f"GROUP BY v ORDER BY n DESC, v LIMIT {NER_MAX_DISTINCT_VALUES}) AS top_values"
+    )[0]
+    covered = row["covered"] or 0
+    return float(row["matched"] or 0) / covered if covered else 0.0
 
 
 def classify_table(adapter: Adapter, table: str) -> list[ClassificationResult]:

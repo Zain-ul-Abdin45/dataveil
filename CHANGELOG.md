@@ -19,6 +19,9 @@ change behavior).
 
 ### Added
 
+- `PII:PERSON_NAME` classifier for free-text person names, using a local
+  spaCy model (optional `ner` extra and `en_core_web_sm`). Runs on DuckDB and
+  on SQLMesh or dbt projects on DuckDB; skipped elsewhere.
 - `DbtAdapter` for dbt projects: lists the models from dbt's
   `target/manifest.json` and runs SQL through a DuckDB or Postgres adapter.
   No dbt dependency.
@@ -31,6 +34,11 @@ change behavior).
   pull request template and issue forms.
 - `make check` (lint, format check, mypy, tests), pre-commit hooks, and CI on
   Python 3.13.
+
+### Fixed
+
+- Creating a second `DuckDBAdapter` on the same connection no longer fails
+  with "function already created".
 
 ### Changed
 

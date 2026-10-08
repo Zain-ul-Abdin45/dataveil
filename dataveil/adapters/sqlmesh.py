@@ -38,31 +38,30 @@ from sqlmesh.utils.errors import SQLMeshError
 from ..core.adapter import Adapter
 from ..core.sql import quote_ident
 from ._checksums import IBAN_FUNCTION_SQL, LUHN_FUNCTION_SQL, iban_valid, luhn_valid
+from ._duckdb_udf import replace_function
+from ._ner import ner_available, ner_label
 
 if TYPE_CHECKING:
     from sqlmesh.core.context import Context
 
 
 class SQLMeshAdapter(Adapter):
-    def __init__(self, context: "Context", *, register_checksum_functions: bool = True):
+    def __init__(
+        self, context: "Context", *, register_checksum_functions: bool = True, register_ner_function: bool = True
+    ):
         self._ctx = context
         self._has_checksum = register_checksum_functions and self._register_checksum_functions()
+        self._has_ner = register_ner_function and self._register_ner_function()
 
     def _register_checksum_functions(self) -> bool:
         engine = self._ctx.engine_adapter
         if engine.dialect == "duckdb":
-            import duckdb
-
             # SQLMesh shares one DuckDB connection across threads (and reuses it
             # for another Context on the same database), so a UDF registered
             # here is visible to every later query, and may already exist.
             connection = engine.connection
             for name, function in (("dataveil_luhn_valid", luhn_valid), ("dataveil_iban_valid", iban_valid)):
-                try:
-                    connection.remove_function(name)
-                except duckdb.InvalidInputException:
-                    pass  # not registered yet
-                connection.create_function(name, function, [str], bool)
+                replace_function(connection, name, function, bool)
             return True
         if engine.dialect == "postgres":
             engine.execute(LUHN_FUNCTION_SQL)
@@ -91,8 +90,18 @@ class SQLMeshAdapter(Adapter):
         model = self._ctx.get_model(table, raise_if_missing=True)
         return {col: str(dtype) for col, dtype in (model.columns_to_types or {}).items()}
 
+    def _register_ner_function(self) -> bool:
+        # Python functions only run inside DuckDB, not Postgres or other engines.
+        if self._ctx.engine_adapter.dialect != "duckdb" or not ner_available():
+            return False
+        replace_function(self._ctx.engine_adapter.connection, "dataveil_ner_label", ner_label, str)
+        return True
+
     def has_checksum_functions(self) -> bool:
         return self._has_checksum
+
+    def has_ner_function(self) -> bool:
+        return self._has_ner
 
     def _physical_table(self, table: str) -> str:
         model = self._ctx.get_model(table, raise_if_missing=True)

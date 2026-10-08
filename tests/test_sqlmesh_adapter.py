@@ -66,7 +66,8 @@ def test_classify_tags_email_and_ssn(sqlmesh_adapter):
     results = {r.column: r.tag for r in classify_table(sqlmesh_adapter, "dataveil_test.people")}
     assert results["email"] == "PII:EMAIL"
     assert results["ssn"] == "PII:SSN"
-    assert results["full_name"] == "none"
+    # names are only recognized when the optional NER model is installed
+    assert results["full_name"] == ("PII:PERSON_NAME" if sqlmesh_adapter.has_ner_function() else "none")
 
 
 def test_checksum_classifiers_work_on_a_duckdb_project(sqlmesh_adapter):

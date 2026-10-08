@@ -26,6 +26,7 @@ duckdb = ["duckdb>=1.0.0", "numpy>=1.24"]
 sqlmesh = ["sqlmesh>=0.236.0"]
 postgres = ["sqlalchemy>=2.0.0", "psycopg2-binary>=2.9.0"]
 mcp = ["mcp>=2.0.0"]
+ner = ["spacy>=3.7"]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24",
@@ -36,6 +37,7 @@ dev = [
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
     "mcp>=2.0.0",
+    "spacy>=3.7",
     "faker>=20.0.0",
     "mypy>=1.10",
     "pre-commit>=3.7",

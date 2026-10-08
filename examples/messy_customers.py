@@ -106,7 +106,7 @@ def main() -> None:
         print(f"  {col.name:15s} {col.type:10s} {' '.join(bits)}")
     print()
 
-    print("--- Stage 2: classify (local regex/checksum, no LLM) ---")
+    print("--- Stage 2: classify (local regex/checksum/NER, no LLM) ---")
     classifications = classify_table(adapter, "customers")
     for c in classifications:
         print(f"  {c.column:15s} -> {c.tag:16s} match_rate={c.match_rate:.2f}")
