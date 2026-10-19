@@ -3,8 +3,8 @@ against whichever adapter is configured -- usable outside SQLMesh entirely,
 not just via sqlmesh-mcp (PLAN.md Phase 6, built once there was more than
 one adapter to prove this wasn't SQLMesh-specific).
 
-Configure via DATAVEIL_ADAPTER (one of "duckdb", "postgres", "sqlmesh") plus
-that adapter's own setting:
+Configure via DATAVEIL_ADAPTER (one of "duckdb", "postgres", "sqlmesh", or
+the name of an installed adapter plugin) plus that adapter's own setting:
 
   - duckdb:   DATAVEIL_DUCKDB_PATH -- a file path, or ":memory:" (default)
   - postgres: DATAVEIL_POSTGRES_URL -- a SQLAlchemy URL (required)
@@ -12,7 +12,8 @@ that adapter's own setting:
               (required; same env var sqlmesh-mcp uses, for anyone running
               both against the same project)
 
-or the [adapter] section of a dataveil.toml (see dataveil/config.py). The
+or the [adapter] section of a dataveil.toml (see dataveil/config.py). A
+plugin adapter gets its settings from [adapter.options]. The
 environment variables take precedence over the file. The file's [profile]
 and [classify] thresholds apply to every tool call.
 
@@ -38,7 +39,7 @@ from mcp_types import ToolAnnotations
 
 from .audit import AuditLog
 from .config import Config, load_config
-from .core.adapter import Adapter
+from .core.adapter import Adapter, AdapterNotConfiguredError, adapter_names, load_adapter_factory
 from .core.classify import classify_table
 from .core.execute import ExecutionError, execute_plan
 from .core.plan import PlanValidationError, operation_vocabulary
@@ -53,10 +54,6 @@ server = MCPServer("dataveil")
 # SDK derives an output schema from the annotation and changes what clients receive.
 
 
-class AdapterNotConfiguredError(RuntimeError):
-    pass
-
-
 @lru_cache(maxsize=1)
 def get_config() -> Config:
     return load_config()
@@ -66,43 +63,35 @@ def _setting(env_var: str, from_file: str | None) -> str | None:
     return os.environ.get(env_var) or from_file
 
 
+# The built-in adapters' one setting each: option name, environment variable,
+# [adapter] key, and whether it is required.
+_BUILTIN_SETTINGS = {
+    "duckdb": ("path", "DATAVEIL_DUCKDB_PATH", "duckdb_path", False),
+    "postgres": ("url", "DATAVEIL_POSTGRES_URL", "postgres_url", True),
+    "sqlmesh": ("project_path", "SQLMESH_PROJECT_PATH", "sqlmesh_project_path", True),
+}
+
+
 @lru_cache(maxsize=1)
 def get_adapter() -> Adapter:
     settings = get_config().adapter
     kind = _setting("DATAVEIL_ADAPTER", settings.kind)
+    names = adapter_names()
+    if not kind or kind not in names:
+        raise AdapterNotConfiguredError(
+            "DATAVEIL_ADAPTER is not set (or is unrecognized), nor [adapter] kind in dataveil.toml -- "
+            f"must be one of {', '.join(repr(n) for n in names)}"
+        )
 
-    if kind == "duckdb":
-        import duckdb
-
-        from .adapters.duckdb import DuckDBAdapter
-
-        path = _setting("DATAVEIL_DUCKDB_PATH", settings.duckdb_path) or ":memory:"
-        return DuckDBAdapter(duckdb.connect(path))
-
-    if kind == "postgres":
-        import sqlalchemy as sa
-
-        from .adapters.postgres import PostgresAdapter
-
-        url = _setting("DATAVEIL_POSTGRES_URL", settings.postgres_url)
-        if not url:
-            raise AdapterNotConfiguredError("DATAVEIL_POSTGRES_URL is not set (nor [adapter] postgres_url)")
-        return PostgresAdapter(sa.create_engine(url))
-
-    if kind == "sqlmesh":
-        from sqlmesh.core.context import Context
-
-        from .adapters.sqlmesh import SQLMeshAdapter
-
-        project_path = _setting("SQLMESH_PROJECT_PATH", settings.sqlmesh_project_path)
-        if not project_path:
-            raise AdapterNotConfiguredError("SQLMESH_PROJECT_PATH is not set (nor [adapter] sqlmesh_project_path)")
-        return SQLMeshAdapter(Context(paths=project_path))
-
-    raise AdapterNotConfiguredError(
-        "DATAVEIL_ADAPTER is not set (or is unrecognized), nor [adapter] kind in dataveil.toml -- "
-        "must be one of 'duckdb', 'postgres', 'sqlmesh'"
-    )
+    options = dict(settings.options)
+    if kind in _BUILTIN_SETTINGS:
+        option, env_var, key, required = _BUILTIN_SETTINGS[kind]
+        value = _setting(env_var, getattr(settings, key))
+        if required and not value:
+            raise AdapterNotConfiguredError(f"{env_var} is not set (nor [adapter] {key})")
+        if value:
+            options[option] = value
+    return load_adapter_factory(kind)(options)
 
 
 def _audit_log() -> AuditLog:

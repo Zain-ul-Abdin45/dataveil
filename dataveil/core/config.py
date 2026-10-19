@@ -21,6 +21,10 @@ class ConfigError(ValueError):
     pass
 
 
+class PluginError(ConfigError):
+    """An installed adapter or classifier plugin is broken or conflicts with another."""
+
+
 def _require_int(section: str, key: str, value: object) -> int:
     # bool is a subclass of int, but `min_signature_count = true` is a mistake.
     if isinstance(value, bool) or not isinstance(value, int):
@@ -81,32 +85,31 @@ _TAG_RE = re.compile(r"^[A-Za-z0-9_]+(:[A-Za-z0-9_]+)*$")
 _NON_PORTABLE_ESCAPES = set("bBAZz123456789")
 
 
-def _check_portable_pattern(tag: str, pattern: str) -> None:
+def check_portable_pattern(where: str, pattern: str, error: type[ConfigError] = ConfigError) -> None:
     """Reject a regex that is invalid, or would match differently on DuckDB
-    and Postgres, before any query runs."""
-    where = f"[[classify.custom]] {tag}"
+    and Postgres, before any query runs. ``where`` prefixes the message."""
     try:
         re.compile(pattern)
     except re.error as e:
-        raise ConfigError(f"{where}: invalid pattern {pattern!r}: {e}") from e
+        raise error(f"{where}: invalid pattern {pattern!r}: {e}") from e
     # DuckDB's ~ matches the whole string, Postgres's ~ any substring; an
     # anchored pattern means the same on both.
     # A $ after an odd number of backslashes is a literal dollar sign.
     trailing_backslashes = len(pattern[:-1]) - len(pattern[:-1].rstrip("\\"))
     if not pattern.startswith("^") or not pattern.endswith("$") or trailing_backslashes % 2:
-        raise ConfigError(f"{where}: pattern must start with ^ and end with $, got {pattern!r}")
+        raise error(f"{where}: pattern must start with ^ and end with $, got {pattern!r}")
     i = 0
     while i < len(pattern):
         ch = pattern[i]
         if ch == "\\" and i + 1 < len(pattern):
             if pattern[i + 1] in _NON_PORTABLE_ESCAPES:
-                raise ConfigError(f"{where}: \\{pattern[i + 1]} is not supported the same way on every engine")
+                raise error(f"{where}: \\{pattern[i + 1]} is not supported the same way on every engine")
             i += 2
             continue
         # Only non-capturing groups: lookarounds, named groups and inline
         # flags are missing from RE2 or Postgres, or spelled differently.
         if pattern.startswith("(?", i) and not pattern.startswith("(?:", i):
-            raise ConfigError(f"{where}: only (?:...) groups are supported, not {pattern[i : i + 4]!r}...")
+            raise error(f"{where}: only (?:...) groups are supported, not {pattern[i : i + 4]!r}...")
         i += 1
 
 
@@ -128,7 +131,7 @@ class CustomClassifier:
             raise ConfigError("[[classify.custom]] tag must not be 'none'")
         if not isinstance(self.pattern, str) or not self.pattern:
             raise ConfigError(f"[[classify.custom]] {self.tag}: pattern must be a non-empty string")
-        _check_portable_pattern(self.tag, self.pattern)
+        check_portable_pattern(f"[[classify.custom]] {self.tag}", self.pattern)
         if not isinstance(self.name_hints, tuple) or not all(isinstance(h, str) and h for h in self.name_hints):
             raise ConfigError(f"[[classify.custom]] {self.tag}: name_hints must be a list of non-empty strings")
         # Column names are compared lower-cased.

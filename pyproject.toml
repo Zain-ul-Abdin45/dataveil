@@ -46,6 +46,15 @@ dev = [
 [project.scripts]
 dataveil-mcp = "dataveil.server:main"
 
+# The built-in adapters and classifiers register like any plugin.
+[project.entry-points."dataveil.adapters"]
+duckdb = "dataveil.adapters.factories:duckdb_adapter"
+postgres = "dataveil.adapters.factories:postgres_adapter"
+sqlmesh = "dataveil.adapters.factories:sqlmesh_adapter"
+
+[project.entry-points."dataveil.classifiers"]
+builtin = "dataveil.core.classify:CLASSIFIERS"
+
 [project.urls]
 Homepage = "https://github.com/Zain-ul-Abdin45/dataveil"
 Issues = "https://github.com/Zain-ul-Abdin45/dataveil/issues"

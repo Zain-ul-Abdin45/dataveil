@@ -28,10 +28,13 @@ A file named by (1) or (2) must exist. Without either, a missing
     name_hints = ["customer_id"]      # optional; lowers the bar to name_hint_threshold
 
     [adapter]
-    kind = "duckdb"                   # "duckdb", "postgres" or "sqlmesh"
+    kind = "duckdb"                   # "duckdb", "postgres", "sqlmesh" or a plugin
     duckdb_path = "warehouse.duckdb"
     postgres_url = "postgresql+psycopg2://localhost/analytics"
     sqlmesh_project_path = "path/to/project"
+
+    [adapter.options]                 # for an adapter plugin, passed to its factory
+    account = "acme"
 
     [audit]
     log_path = ".dataveil/audit.jsonl"
@@ -50,7 +53,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .core.classify import CLASSIFIERS, classifiers_for
+from .core.adapter import adapter_names
+from .core.classify import classifiers_for, registered_classifiers
 from .core.config import ClassifyConfig, ConfigError, CustomClassifier, ProfileConfig
 
 if sys.version_info >= (3, 11):
@@ -62,8 +66,6 @@ __all__ = ["AdapterConfig", "Config", "ConfigError", "DEFAULT_CONFIG_PATH", "loa
 
 DEFAULT_CONFIG_PATH = Path("dataveil.toml")
 
-ADAPTER_KINDS = ("duckdb", "postgres", "sqlmesh")
-
 
 @dataclasses.dataclass(frozen=True)
 class AdapterConfig:
@@ -71,14 +73,18 @@ class AdapterConfig:
     duckdb_path: str | None = None
     postgres_url: str | None = None
     sqlmesh_project_path: str | None = None
+    # Passed to a plugin adapter's factory; see dataveil.core.adapter.
+    options: dict[str, str] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for field in dataclasses.fields(self):
             value = getattr(self, field.name)
-            if value is not None and not isinstance(value, str):
+            if field.name != "options" and value is not None and not isinstance(value, str):
                 raise ConfigError(f"[adapter] {field.name} must be a string, got {value!r}")
-        if self.kind is not None and self.kind not in ADAPTER_KINDS:
-            raise ConfigError(f"[adapter] kind must be one of {', '.join(ADAPTER_KINDS)}, got {self.kind!r}")
+        if not isinstance(self.options, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in self.options.items()
+        ):
+            raise ConfigError(f"[adapter.options] values must be strings, got {self.options!r}")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -118,13 +124,17 @@ def _section(name: str, cls: type[Any], data: object) -> Any:
         disabled = values["disabled"]
         if not isinstance(disabled, list) or not all(isinstance(t, str) for t in disabled):
             raise ConfigError(f"[classify] disabled must be a list of tags, got {disabled!r}")
-        tags = {c.tag for c in CLASSIFIERS}
+        tags = {c.tag for c in registered_classifiers()}
         unknown_tags = sorted(set(disabled) - tags)
         if unknown_tags:
             raise ConfigError(
                 f"[classify] disabled has unknown tag(s): {', '.join(unknown_tags)} (known: {', '.join(sorted(tags))})"
             )
         values["disabled"] = tuple(disabled)
+    if name == "adapter" and values.get("kind") is not None:
+        names = adapter_names()
+        if values["kind"] not in names:
+            raise ConfigError(f"[adapter] kind must be one of {', '.join(names)}, got {values['kind']!r}")
     if name == "classify" and "custom" in values:
         values["custom"] = _custom_classifiers(values["custom"])
         classifiers_for(cls(**values))  # rejects a custom tag that clashes with a built-in one

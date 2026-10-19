@@ -19,6 +19,11 @@ change behavior).
   internal customer numbers. They run as aggregate counts like the built-in
   classifiers, on every adapter. Patterns that are invalid, unanchored, or
   would match differently on DuckDB and Postgres are rejected at load time.
+- Adapter and classifier plugins through the `dataveil.adapters` and
+  `dataveil.classifiers` entry point groups. The built-in adapters and
+  classifiers are registered the same way. A classifier plugin provides
+  definitions, not code, so it can only produce aggregate counts. Plugin
+  adapters get their settings from `[adapter.options]`.
 - `profile_table`, `classify_table` and `classify_column` take an optional
   config argument. Without it they behave as before.
 
