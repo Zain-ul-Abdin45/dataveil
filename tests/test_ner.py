@@ -9,10 +9,10 @@ import pytest
 duckdb = pytest.importorskip("duckdb")
 
 import dataveil.adapters.duckdb as duckdb_adapter_module  # noqa: E402
-import dataveil.core.classify as classify_module  # noqa: E402
 from dataveil.adapters._ner import ner_available  # noqa: E402
 from dataveil.adapters.duckdb import DuckDBAdapter  # noqa: E402
 from dataveil.core.classify import classify_table  # noqa: E402
+from dataveil.core.config import ClassifyConfig  # noqa: E402
 
 needs_model = pytest.mark.skipif(not ner_available(), reason="spaCy model en_core_web_sm not installed")
 
@@ -42,10 +42,10 @@ NOT_NAMES = [
 ]
 
 
-def _classify(con, adapter, column, values):
+def _classify(con, adapter, column, values, config=None):
     con.execute(f"CREATE TABLE t_{column} ({column} VARCHAR)")
     con.executemany(f"INSERT INTO t_{column} VALUES (?)", [[v] for v in values])
-    return {r.column: r for r in classify_table(adapter, f"t_{column}")}[column]
+    return {r.column: r for r in classify_table(adapter, f"t_{column}", config)}[column]
 
 
 @pytest.fixture
@@ -74,11 +74,10 @@ def test_a_name_hint_lowers_the_threshold(con):
 
 
 @needs_model
-def test_rate_is_over_the_most_frequent_distinct_values(con, monkeypatch):
+def test_rate_is_over_the_most_frequent_distinct_values(con):
     # only the 2 most frequent distinct values are labelled; both are names
-    monkeypatch.setattr(classify_module, "NER_MAX_DISTINCT_VALUES", 2)
     values = ["Alice Wonderland"] * 5 + ["Bob Smith"] * 4 + NOT_NAMES
-    result = _classify(con, DuckDBAdapter(con), "contact", values)
+    result = _classify(con, DuckDBAdapter(con), "contact", values, ClassifyConfig(ner_max_distinct_values=2))
     assert result.tag == "PII:PERSON_NAME"
     assert result.match_rate == 1.0
 

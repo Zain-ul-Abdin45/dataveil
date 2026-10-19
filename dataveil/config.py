@@ -1,0 +1,153 @@
+"""Read dataveil's settings from a ``dataveil.toml`` file.
+
+The file is found in this order:
+
+1. the ``path`` argument of :func:`load_config`,
+2. the ``DATAVEIL_CONFIG`` environment variable,
+3. ``./dataveil.toml``.
+
+A file named by (1) or (2) must exist. Without either, a missing
+``./dataveil.toml`` means the defaults. Every section is optional::
+
+    [profile]
+    min_signature_count = 10          # can only be raised (default 5)
+    min_extreme_count = 10            # can only be raised (default 5)
+    min_rows_for_numeric_stats = 50   # can only be raised (default 10)
+    min_distinct_for_numeric_stats = 5  # can only be raised (default 3)
+    max_format_signatures = 10        # can only be lowered (default 20)
+
+    [classify]
+    match_threshold = 0.9             # default 0.8
+    name_hint_threshold = 0.6         # default 0.5
+    ner_max_distinct_values = 5000    # default 10000
+    disabled = ["PII:PHONE"]          # built-in classifiers to skip
+
+    [adapter]
+    kind = "duckdb"                   # "duckdb", "postgres" or "sqlmesh"
+    duckdb_path = "warehouse.duckdb"
+    postgres_url = "postgresql+psycopg2://localhost/analytics"
+    sqlmesh_project_path = "path/to/project"
+
+    [audit]
+    log_path = ".dataveil/audit.jsonl"
+
+Unknown sections and keys are errors, so a typo is not silently ignored.
+Environment variables such as ``DATAVEIL_ADAPTER`` still work and take
+precedence over ``[adapter]``. Keep passwords out of the file: put a
+``postgres_url`` with credentials in ``DATAVEIL_POSTGRES_URL`` instead.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+from .core.classify import CLASSIFIERS
+from .core.config import ClassifyConfig, ConfigError, ProfileConfig
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - exercised on the Python 3.10 CI job
+    import tomli as tomllib
+
+__all__ = ["AdapterConfig", "Config", "ConfigError", "DEFAULT_CONFIG_PATH", "load_config", "parse_config"]
+
+DEFAULT_CONFIG_PATH = Path("dataveil.toml")
+
+ADAPTER_KINDS = ("duckdb", "postgres", "sqlmesh")
+
+
+@dataclasses.dataclass(frozen=True)
+class AdapterConfig:
+    kind: str | None = None
+    duckdb_path: str | None = None
+    postgres_url: str | None = None
+    sqlmesh_project_path: str | None = None
+
+    def __post_init__(self) -> None:
+        for field in dataclasses.fields(self):
+            value = getattr(self, field.name)
+            if value is not None and not isinstance(value, str):
+                raise ConfigError(f"[adapter] {field.name} must be a string, got {value!r}")
+        if self.kind is not None and self.kind not in ADAPTER_KINDS:
+            raise ConfigError(f"[adapter] kind must be one of {', '.join(ADAPTER_KINDS)}, got {self.kind!r}")
+
+
+@dataclasses.dataclass(frozen=True)
+class AuditConfig:
+    log_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.log_path is not None and not isinstance(self.log_path, str):
+            raise ConfigError(f"[audit] log_path must be a string, got {self.log_path!r}")
+
+
+@dataclasses.dataclass(frozen=True)
+class Config:
+    profile: ProfileConfig = dataclasses.field(default_factory=ProfileConfig)
+    classify: ClassifyConfig = dataclasses.field(default_factory=ClassifyConfig)
+    adapter: AdapterConfig = dataclasses.field(default_factory=AdapterConfig)
+    audit: AuditConfig = dataclasses.field(default_factory=AuditConfig)
+
+
+_SECTIONS: dict[str, type[Any]] = {
+    "profile": ProfileConfig,
+    "classify": ClassifyConfig,
+    "adapter": AdapterConfig,
+    "audit": AuditConfig,
+}
+
+
+def _section(name: str, cls: type[Any], data: object) -> Any:
+    if not isinstance(data, dict):
+        raise ConfigError(f"[{name}] must be a table")
+    known = {f.name for f in dataclasses.fields(cls)}
+    unknown = sorted(set(data) - known)
+    if unknown:
+        raise ConfigError(f"[{name}] unknown key(s): {', '.join(unknown)} (known: {', '.join(sorted(known))})")
+    values = dict(data)
+    if name == "classify" and "disabled" in values:
+        disabled = values["disabled"]
+        if not isinstance(disabled, list) or not all(isinstance(t, str) for t in disabled):
+            raise ConfigError(f"[classify] disabled must be a list of tags, got {disabled!r}")
+        tags = {c.tag for c in CLASSIFIERS}
+        unknown_tags = sorted(set(disabled) - tags)
+        if unknown_tags:
+            raise ConfigError(
+                f"[classify] disabled has unknown tag(s): {', '.join(unknown_tags)} (known: {', '.join(sorted(tags))})"
+            )
+        values["disabled"] = tuple(disabled)
+    return cls(**values)
+
+
+def parse_config(data: dict[str, Any]) -> Config:
+    """Build a :class:`Config` from already-parsed TOML data."""
+    unknown = sorted(set(data) - set(_SECTIONS))
+    if unknown:
+        raise ConfigError(f"unknown section(s): {', '.join(unknown)} (known: {', '.join(_SECTIONS)})")
+    return Config(**{name: _section(name, cls, data[name]) for name, cls in _SECTIONS.items() if name in data})
+
+
+def load_config(path: str | os.PathLike[str] | None = None) -> Config:
+    """Load the settings file; see the module docstring for where it is looked up."""
+    if path is None and os.environ.get("DATAVEIL_CONFIG"):
+        path = os.environ["DATAVEIL_CONFIG"]
+    if path is None:
+        if not DEFAULT_CONFIG_PATH.is_file():
+            return Config()
+        path = DEFAULT_CONFIG_PATH
+    config_path = Path(path)
+    if not config_path.is_file():
+        raise ConfigError(f"config file not found: {config_path}")
+    try:
+        with config_path.open("rb") as f:
+            data = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{config_path} is not valid TOML: {e}") from e
+    try:
+        return parse_config(data)
+    except ConfigError as e:
+        raise ConfigError(f"{config_path}: {e}") from e

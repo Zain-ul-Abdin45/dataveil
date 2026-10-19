@@ -12,6 +12,10 @@ that adapter's own setting:
               (required; same env var sqlmesh-mcp uses, for anyone running
               both against the same project)
 
+or the [adapter] section of a dataveil.toml (see dataveil/config.py). The
+environment variables take precedence over the file. The file's [profile]
+and [classify] thresholds apply to every tool call.
+
 Every tool here (except list_tables) matches sqlmesh-mcp's
 profile_model/propose_cleansing_plan/apply_cleansing_plan one for one, just
 against `table` instead of `model_name` -- this server has no SQLMesh
@@ -33,6 +37,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 
 from .audit import AuditLog
+from .config import Config, load_config
 from .core.adapter import Adapter
 from .core.classify import classify_table
 from .core.execute import ExecutionError, execute_plan
@@ -53,15 +58,25 @@ class AdapterNotConfiguredError(RuntimeError):
 
 
 @lru_cache(maxsize=1)
+def get_config() -> Config:
+    return load_config()
+
+
+def _setting(env_var: str, from_file: str | None) -> str | None:
+    return os.environ.get(env_var) or from_file
+
+
+@lru_cache(maxsize=1)
 def get_adapter() -> Adapter:
-    kind = os.environ.get("DATAVEIL_ADAPTER")
+    settings = get_config().adapter
+    kind = _setting("DATAVEIL_ADAPTER", settings.kind)
 
     if kind == "duckdb":
         import duckdb
 
         from .adapters.duckdb import DuckDBAdapter
 
-        path = os.environ.get("DATAVEIL_DUCKDB_PATH", ":memory:")
+        path = _setting("DATAVEIL_DUCKDB_PATH", settings.duckdb_path) or ":memory:"
         return DuckDBAdapter(duckdb.connect(path))
 
     if kind == "postgres":
@@ -69,9 +84,9 @@ def get_adapter() -> Adapter:
 
         from .adapters.postgres import PostgresAdapter
 
-        url = os.environ.get("DATAVEIL_POSTGRES_URL")
+        url = _setting("DATAVEIL_POSTGRES_URL", settings.postgres_url)
         if not url:
-            raise AdapterNotConfiguredError("DATAVEIL_POSTGRES_URL is not set")
+            raise AdapterNotConfiguredError("DATAVEIL_POSTGRES_URL is not set (nor [adapter] postgres_url)")
         return PostgresAdapter(sa.create_engine(url))
 
     if kind == "sqlmesh":
@@ -79,19 +94,20 @@ def get_adapter() -> Adapter:
 
         from .adapters.sqlmesh import SQLMeshAdapter
 
-        project_path = os.environ.get("SQLMESH_PROJECT_PATH")
+        project_path = _setting("SQLMESH_PROJECT_PATH", settings.sqlmesh_project_path)
         if not project_path:
-            raise AdapterNotConfiguredError("SQLMESH_PROJECT_PATH is not set")
+            raise AdapterNotConfiguredError("SQLMESH_PROJECT_PATH is not set (nor [adapter] sqlmesh_project_path)")
         return SQLMeshAdapter(Context(paths=project_path))
 
     raise AdapterNotConfiguredError(
-        "DATAVEIL_ADAPTER is not set (or is unrecognized) -- must be one of 'duckdb', 'postgres', 'sqlmesh'"
+        "DATAVEIL_ADAPTER is not set (or is unrecognized), nor [adapter] kind in dataveil.toml -- "
+        "must be one of 'duckdb', 'postgres', 'sqlmesh'"
     )
 
 
 def _audit_log() -> AuditLog:
     default_path = Path(".dataveil") / "audit.jsonl"
-    return AuditLog(os.environ.get("DATAVEIL_AUDIT_LOG_PATH", str(default_path)))
+    return AuditLog(_setting("DATAVEIL_AUDIT_LOG_PATH", get_config().audit.log_path) or str(default_path))
 
 
 def _translate_errors(fn: Callable[P, R]) -> Callable[P, R]:
@@ -129,7 +145,7 @@ def profile(table: str) -> dict[str, Any]:
     for small or constant columns. See README's Known limits.
     """
     adapter = get_adapter()
-    result = profile_table(adapter, table).to_dict()
+    result = profile_table(adapter, table, get_config().profile).to_dict()
     _audit_log().record("profile", table, {"row_count": result["row_count"]})
     return result
 
@@ -151,8 +167,9 @@ def propose_cleansing_plan(table: str) -> dict[str, Any]:
     apply_cleansing_plan.
     """
     adapter = get_adapter()
-    profile_result = profile_table(adapter, table)
-    classifications = classify_table(adapter, table)
+    config = get_config()
+    profile_result = profile_table(adapter, table, config.profile)
+    classifications = classify_table(adapter, table, config.classify)
     _audit_log().record("classify", table, {"tags": {c.column: c.tag for c in classifications}})
     return {
         "table": table,

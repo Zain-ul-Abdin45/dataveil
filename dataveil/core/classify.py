@@ -10,7 +10,7 @@ The starting set follows the well-established Presidio pattern set (email,
 phone, SSN, credit card, IBAN) rather than inventing new regexes. Person
 names need NER, not regex: the ``PII:PERSON_NAME`` classifier calls the
 adapter's optional ``dataveil_ner_label`` function (see adapter.py), once
-per distinct value, for the ``NER_MAX_DISTINCT_VALUES`` most frequent values.
+per distinct value, for the ``ner_max_distinct_values`` most frequent values.
 Its match rate is computed over the rows those values cover. Addresses are
 not classified yet.
 """
@@ -22,18 +22,22 @@ from typing import Any
 
 from .adapter import Adapter
 from .coltypes import is_string_type
+from .config import ClassifyConfig
 from .sql import quote_ident
+
+# The thresholds below are the defaults of ClassifyConfig (core/config.py),
+# which a dataveil.toml can change.
 
 # A column must match a classifier's pattern (+ checksum, where applicable)
 # for at least this fraction of its non-null values to be tagged.
-MATCH_THRESHOLD = 0.8
+MATCH_THRESHOLD = ClassifyConfig.match_threshold
 
 # Lower bar used when the column name itself also hints at the tag.
-NAME_HINT_THRESHOLD = 0.5
+NAME_HINT_THRESHOLD = ClassifyConfig.name_hint_threshold
 
 # The NER model is slow (hundreds of values per second), so it only labels
 # this many of a column's most frequent distinct values.
-NER_MAX_DISTINCT_VALUES = 10_000
+NER_MAX_DISTINCT_VALUES = ClassifyConfig.ner_max_distinct_values
 
 
 @dataclasses.dataclass(frozen=True)
@@ -105,12 +109,16 @@ def _escape_sql_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
-def classify_column(adapter: Adapter, table: str, column: str) -> ClassificationResult:
+def classify_column(
+    adapter: Adapter, table: str, column: str, config: ClassifyConfig | None = None
+) -> ClassificationResult:
     schema = adapter.get_schema(table)
-    return _classify_column(adapter, table, column, schema.get(column, ""))
+    return _classify_column(adapter, table, column, schema.get(column, ""), config or ClassifyConfig())
 
 
-def _classify_column(adapter: Adapter, table: str, column: str, column_type: str) -> ClassificationResult:
+def _classify_column(
+    adapter: Adapter, table: str, column: str, column_type: str, config: ClassifyConfig
+) -> ClassificationResult:
     # Casting a non-string column (DATE, BOOLEAN, ...) to VARCHAR for a regex
     # match produces false positives unrelated to its actual content -- e.g.
     # a DATE like '2020-01-01' matches the phone-number pattern below.
@@ -128,14 +136,16 @@ def _classify_column(adapter: Adapter, table: str, column: str, column_type: str
     best_rate = 0.0
 
     for clf in CLASSIFIERS:
+        if clf.tag in config.disabled:
+            continue
         if clf.requires_checksum and not adapter.has_checksum_functions():
             continue
         if clf.ner_label is not None:
             if not adapter.has_ner_function():
                 continue
-            match_rate = _ner_match_rate(adapter, qt, qc, clf.ner_label)
+            match_rate = _ner_match_rate(adapter, qt, qc, clf.ner_label, config.ner_max_distinct_values)
             name_hinted = any(hint in column.lower() for hint in clf.name_hints)
-            threshold = NAME_HINT_THRESHOLD if name_hinted else MATCH_THRESHOLD
+            threshold = config.name_hint_threshold if name_hinted else config.match_threshold
             if match_rate >= threshold and match_rate > best_rate:
                 best_tag, best_rate = clf.tag, match_rate
             continue
@@ -157,7 +167,7 @@ def _classify_column(adapter: Adapter, table: str, column: str, column_type: str
         match_rate = matches / non_null
 
         name_hinted = any(hint in column.lower() for hint in clf.name_hints)
-        threshold = NAME_HINT_THRESHOLD if name_hinted else MATCH_THRESHOLD
+        threshold = config.name_hint_threshold if name_hinted else config.match_threshold
 
         if match_rate >= threshold and match_rate > best_rate:
             best_tag, best_rate = clf.tag, match_rate
@@ -165,10 +175,10 @@ def _classify_column(adapter: Adapter, table: str, column: str, column_type: str
     return ClassificationResult(column=column, tag=best_tag, match_rate=best_rate)
 
 
-def _ner_match_rate(adapter: Adapter, qt: str, qc: str, label: str) -> float:
+def _ner_match_rate(adapter: Adapter, qt: str, qc: str, label: str, max_distinct_values: int) -> float:
     """Share of rows whose value has the given entity label.
 
-    The model runs once per distinct value, for the NER_MAX_DISTINCT_VALUES
+    The model runs once per distinct value, for the ``max_distinct_values``
     most frequent ones; the rate is over the rows those values cover. Only
     the two counts come back.
     """
@@ -176,12 +186,13 @@ def _ner_match_rate(adapter: Adapter, qt: str, qc: str, label: str) -> float:
         f"SELECT SUM(n) FILTER (WHERE dataveil_ner_label(v) = '{_escape_sql_literal(label)}') AS matched, "
         f"SUM(n) AS covered FROM ("
         f"SELECT CAST({qc} AS VARCHAR) AS v, COUNT(*) AS n FROM {qt} WHERE {qc} IS NOT NULL "
-        f"GROUP BY v ORDER BY n DESC, v LIMIT {NER_MAX_DISTINCT_VALUES}) AS top_values"
+        f"GROUP BY v ORDER BY n DESC, v LIMIT {max_distinct_values}) AS top_values"
     )[0]
     covered = row["covered"] or 0
     return float(row["matched"] or 0) / covered if covered else 0.0
 
 
-def classify_table(adapter: Adapter, table: str) -> list[ClassificationResult]:
+def classify_table(adapter: Adapter, table: str, config: ClassifyConfig | None = None) -> list[ClassificationResult]:
+    config = config or ClassifyConfig()
     schema = adapter.get_schema(table)
-    return [_classify_column(adapter, table, name, col_type) for name, col_type in schema.items()]
+    return [_classify_column(adapter, table, name, col_type, config) for name, col_type in schema.items()]

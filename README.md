@@ -300,6 +300,55 @@ env var sqlmesh-mcp uses). Four tools: `list_tables`, `profile`,
 dataveil-backed tools, just against `table` instead of `model_name`, since
 there's no SQLMesh Context or physical-snapshot concept here.
 
+## Configuration
+
+Settings live in a `dataveil.toml` file. dataveil reads the file named by
+`DATAVEIL_CONFIG`, or `./dataveil.toml` if that variable is not set. Without
+a file, the defaults below apply. Every section and key is optional.
+
+```toml
+[profile]
+min_signature_count = 5               # can only be raised
+min_extreme_count = 5                 # can only be raised
+min_rows_for_numeric_stats = 10       # can only be raised
+min_distinct_for_numeric_stats = 3    # can only be raised
+max_format_signatures = 20            # can only be lowered
+
+[classify]
+match_threshold = 0.8                 # share of values that must match
+name_hint_threshold = 0.5             # lower bar when the column name hints at the tag
+ner_max_distinct_values = 10000       # values the name model labels per column
+disabled = []                         # built-in tags to skip, e.g. ["PII:PHONE"]
+
+[adapter]                             # used by dataveil-mcp
+kind = "duckdb"                       # "duckdb", "postgres" or "sqlmesh"
+duckdb_path = "warehouse.duckdb"
+postgres_url = "postgresql+psycopg2://localhost/analytics"
+sqlmesh_project_path = "path/to/project"
+
+[audit]
+log_path = ".dataveil/audit.jsonl"
+```
+
+The privacy thresholds can only be made stricter. A value that would make
+the profile reveal more, such as `min_signature_count = 2`, is rejected
+when the file is loaded. Unknown sections, keys and tags are also errors,
+so a typo cannot silently fall back to a default.
+
+The environment variables of the MCP server take precedence over
+`[adapter]` and `[audit]`. Keep credentials out of the file and pass a
+Postgres URL with a password in `DATAVEIL_POSTGRES_URL`.
+
+In library code, load the file and pass its sections explicitly:
+
+```python
+from dataveil.config import load_config
+
+config = load_config()
+profile_table(adapter, "customers", config.profile)
+classify_table(adapter, "customers", config.classify)
+```
+
 ## Development
 
 ```bash

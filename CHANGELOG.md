@@ -7,6 +7,16 @@ change behavior).
 
 ## [Unreleased]
 
+### Added
+
+- `dataveil.toml` configuration file, found through `DATAVEIL_CONFIG` or in
+  the working directory. It sets the profile and classification thresholds,
+  turns built-in classifiers off, and configures the MCP server's adapter
+  and audit log. Privacy thresholds can only be made stricter than the
+  defaults, and unknown keys are rejected.
+- `profile_table`, `classify_table` and `classify_column` take an optional
+  config argument. Without it they behave as before.
+
 ## [0.3.0] - 2026-10-09
 
 ### Security
