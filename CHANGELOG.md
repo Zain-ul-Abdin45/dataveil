@@ -24,6 +24,9 @@ change behavior).
   classifiers are registered the same way. A classifier plugin provides
   definitions, not code, so it can only produce aggregate counts. Plugin
   adapters get their settings from `[adapter.options]`.
+- `benchmarks/run.py` times profiling and classification on synthetic tables
+  of 1M and 10M rows (DuckDB, and Postgres) and counts the queries per
+  column. A non-blocking CI job runs it weekly and on changes to the core.
 - `profile_table`, `classify_table` and `classify_column` take an optional
   config argument. Without it they behave as before.
 

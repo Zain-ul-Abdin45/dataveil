@@ -13,12 +13,12 @@ setup: ## Create .venv and install dataveil with all dev extras
 	$(PY) -m pre_commit install
 
 format: ## Format the code with ruff
-	$(PY) -m ruff format dataveil tests examples
-	$(PY) -m ruff check --fix dataveil tests examples
+	$(PY) -m ruff format dataveil tests examples benchmarks
+	$(PY) -m ruff check --fix dataveil tests examples benchmarks
 
 lint: ## Check lint and formatting (read-only)
-	$(PY) -m ruff check dataveil tests examples
-	$(PY) -m ruff format --check dataveil tests examples
+	$(PY) -m ruff check dataveil tests examples benchmarks
+	$(PY) -m ruff format --check dataveil tests examples benchmarks
 
 typecheck: ## Type-check the package with mypy
 	$(PY) -m mypy dataveil

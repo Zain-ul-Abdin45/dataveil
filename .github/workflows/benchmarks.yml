@@ -1,0 +1,59 @@
+name: Benchmarks
+
+# Non-blocking: a slow run never fails a pull request. Results are uploaded
+# as an artifact and shown in the job summary.
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: "Row counts, space separated"
+        default: "1000000 10000000"
+  schedule:
+    - cron: "0 4 * * 1"
+  pull_request:
+    paths:
+      - "dataveil/core/**"
+      - "dataveil/adapters/**"
+      - "benchmarks/**"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: dataveil_bench
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # pull requests run the small size only; the full sizes run weekly or on demand
+      ROWS: ${{ github.event.inputs.rows || (github.event_name == 'pull_request' && '1000000') || '1000000 10000000' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m spacy download en_core_web_sm
+      - name: DuckDB
+        run: python benchmarks/run.py --rows $ROWS --json duckdb.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: DuckDB with the person-name model
+        run: python benchmarks/run.py --rows 1000000 --ner --json duckdb-ner.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Postgres
+        run: >-
+          python benchmarks/run.py --engine postgres --rows 1000000
+          --postgres-url postgresql+psycopg2://postgres@localhost/dataveil_bench --json postgres.json
+          | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: "*.json"

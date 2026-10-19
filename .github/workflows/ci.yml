@@ -32,8 +32,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: python -m spacy download en_core_web_sm
-      - run: ruff check dataveil tests examples
-      - run: ruff format --check dataveil tests examples
+      - run: ruff check dataveil tests examples benchmarks
+      - run: ruff format --check dataveil tests examples benchmarks
       - run: mypy dataveil
       - run: psql -h localhost -U postgres -c "CREATE DATABASE dataveil_test;"
       - run: pytest
