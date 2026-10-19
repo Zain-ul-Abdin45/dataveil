@@ -243,3 +243,78 @@ def test_server_reports_a_bad_config_as_a_tool_error(server_env):
     (server_env / "dataveil.toml").write_text("[profile]\nmin_extreme_count = 2\n")
     with pytest.raises(ToolError, match="min_extreme_count = 2 is below"):
         list_tables()
+
+
+# --- custom regex classifiers -----------------------------------------------
+
+CUSTOMER_ID = {"tag": "PII:CUSTOMER_ID", "pattern": "^CUS-[0-9]{8}$", "name_hints": ["Customer_Ref"]}
+
+
+def test_custom_classifier_from_toml(no_config_env):
+    path = no_config_env / "dataveil.toml"
+    path.write_text(
+        '[[classify.custom]]\ntag = "PII:CUSTOMER_ID"\npattern = "^CUS-[0-9]{8}$"\nname_hints = ["Customer_Ref"]\n'
+        "[[classify.custom]]\ntag = \"INTERNAL:ACCOUNT\"\npattern = '^ACC\\d{6}$'\n"
+    )
+    custom = load_config().classify.custom
+    assert [c.tag for c in custom] == ["PII:CUSTOMER_ID", "INTERNAL:ACCOUNT"]
+    assert custom[0].name_hints == ("customer_ref",)
+    assert custom[1].pattern == "^ACC\\d{6}$"
+
+
+@pytest.mark.parametrize(
+    "item, message",
+    [
+        ({**CUSTOMER_ID, "pattern": "^CUS-[0-9{8}$"}, "invalid pattern"),
+        ({**CUSTOMER_ID, "pattern": "CUS-[0-9]{8}"}, "must start with \\^ and end with \\$"),
+        ({**CUSTOMER_ID, "pattern": "^CUS-[0-9]{8}\\$"}, "must start with \\^ and end with \\$"),
+        ({**CUSTOMER_ID, "pattern": "^(?i:cus)-[0-9]{8}$"}, "only \\(\\?:\\.\\.\\.\\) groups"),
+        ({**CUSTOMER_ID, "pattern": "^(?!x)CUS-[0-9]{8}$"}, "only \\(\\?:\\.\\.\\.\\) groups"),
+        ({**CUSTOMER_ID, "pattern": "^\\bCUS-[0-9]{8}$"}, "not supported the same way"),
+        ({**CUSTOMER_ID, "pattern": "^(a)\\1$"}, "not supported the same way"),
+        ({**CUSTOMER_ID, "tag": "customer id"}, "tag must look like"),
+        ({**CUSTOMER_ID, "tag": "none"}, "must not be 'none'"),
+        ({**CUSTOMER_ID, "tag": "PII:EMAIL"}, "already used by a built-in"),
+        ({**CUSTOMER_ID, "name_hints": "customer"}, "name_hints must be a list"),
+        ({**CUSTOMER_ID, "regex": "^x$"}, "unknown key"),
+        ({"tag": "PII:CUSTOMER_ID"}, "missing key\\(s\\): pattern"),
+    ],
+)
+def test_invalid_custom_classifiers_are_rejected_at_load(item, message):
+    with pytest.raises(ConfigError, match=message):
+        parse_config({"classify": {"custom": [item]}})
+
+
+def test_duplicate_custom_tags_are_rejected():
+    with pytest.raises(ConfigError, match="duplicate tag"):
+        parse_config({"classify": {"custom": [CUSTOMER_ID, CUSTOMER_ID]}})
+
+
+def test_non_capturing_groups_and_quotes_are_allowed(con):
+    # the single quote must be escaped in the SQL literal, not break the query
+    config = parse_config(
+        {"classify": {"custom": [{"tag": "X:QUOTED", "pattern": "^(?:it's|it''s) [a-z]+$"}]}}
+    ).classify
+    con.execute("CREATE TABLE people (note VARCHAR)")
+    con.executemany("INSERT INTO people VALUES (?)", [["it's fine"]] * 9 + [["nope"]])
+    assert _tags(con, config) == {"note": "X:QUOTED"}
+
+
+@pytest.fixture
+def customers(con):
+    con.execute("CREATE TABLE people (customer_ref VARCHAR, ref VARCHAR, email VARCHAR)")
+    ids = [f"CUS-{i:08d}" for i in range(10)]
+    # 6 of 10 match: only the name-hinted column reaches its lower threshold
+    half = ids[:6] + ["walk-in"] * 4
+    con.executemany(
+        "INSERT INTO people VALUES (?, ?, ?)", [(a, b, f"u{i}@example.com") for i, (a, b) in enumerate(zip(half, half))]
+    )
+    return con
+
+
+def test_custom_classifier_tags_columns_on_duckdb(customers):
+    config = parse_config({"classify": {"custom": [CUSTOMER_ID]}}).classify
+    assert _tags(customers) == {"customer_ref": "none", "ref": "none", "email": "PII:EMAIL"}
+    assert _tags(customers, config) == {"customer_ref": "PII:CUSTOMER_ID", "ref": "none", "email": "PII:EMAIL"}
+    rates = {r.column: r.match_rate for r in classify_table(DuckDBAdapter(customers), "people", config)}
+    assert rates["customer_ref"] == 0.6

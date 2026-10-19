@@ -320,6 +320,11 @@ name_hint_threshold = 0.5             # lower bar when the column name hints at 
 ner_max_distinct_values = 10000       # values the name model labels per column
 disabled = []                         # built-in tags to skip, e.g. ["PII:PHONE"]
 
+[[classify.custom]]                   # your own identifiers; repeat for more
+tag = "PII:CUSTOMER_ID"
+pattern = "^CUS-[0-9]{8}$"
+name_hints = ["customer_id", "cust_no"]  # optional
+
 [adapter]                             # used by dataveil-mcp
 kind = "duckdb"                       # "duckdb", "postgres" or "sqlmesh"
 duckdb_path = "warehouse.duckdb"
@@ -334,6 +339,13 @@ The privacy thresholds can only be made stricter. A value that would make
 the profile reveal more, such as `min_signature_count = 2`, is rejected
 when the file is loaded. Unknown sections, keys and tags are also errors,
 so a typo cannot silently fall back to a default.
+
+A custom classifier runs like the built-in regexes: one aggregate `COUNT`
+per column, with the same thresholds. Its tag cannot reuse a built-in one.
+Patterns are checked when the file is loaded, and must work the same on
+DuckDB and Postgres. So a pattern must be anchored with `^` and `$`, and
+may not use lookarounds, inline flags, named groups, backreferences, or
+`\b`, `\A` and `\Z`.
 
 The environment variables of the MCP server take precedence over
 `[adapter]` and `[audit]`. Keep credentials out of the file and pass a

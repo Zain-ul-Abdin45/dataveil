@@ -13,6 +13,10 @@ adapter's optional ``dataveil_ner_label`` function (see adapter.py), once
 per distinct value, for the ``ner_max_distinct_values`` most frequent values.
 Its match rate is computed over the rows those values cover. Addresses are
 not classified yet.
+
+Teams can add their own regex classifiers (``[[classify.custom]]`` in
+dataveil.toml, see core/config.py). They run exactly like the built-in
+regexes: one aggregate COUNT per column.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from typing import Any
 
 from .adapter import Adapter
 from .coltypes import is_string_type
-from .config import ClassifyConfig
+from .config import ClassifyConfig, ConfigError
 from .sql import quote_ident
 
 # The thresholds below are the defaults of ClassifyConfig (core/config.py),
@@ -95,6 +99,20 @@ CLASSIFIERS: tuple[Classifier, ...] = (
 NONE_TAG = "none"
 
 
+def classifiers_for(config: ClassifyConfig) -> tuple[Classifier, ...]:
+    """The built-in classifiers that are not disabled, then the custom ones.
+
+    A custom classifier may not reuse a built-in tag: two definitions of
+    ``PII:EMAIL`` would make a tag mean different things on different setups.
+    """
+    builtin_tags = {c.tag for c in CLASSIFIERS}
+    clashes = sorted(c.tag for c in config.custom if c.tag in builtin_tags)
+    if clashes:
+        raise ConfigError(f"[[classify.custom]] tag(s) already used by a built-in classifier: {', '.join(clashes)}")
+    custom = tuple(Classifier(tag=c.tag, pattern=c.pattern, name_hints=c.name_hints) for c in config.custom)
+    return tuple(c for c in CLASSIFIERS if c.tag not in config.disabled) + custom
+
+
 @dataclasses.dataclass
 class ClassificationResult:
     column: str
@@ -135,9 +153,7 @@ def _classify_column(
     best_tag = NONE_TAG
     best_rate = 0.0
 
-    for clf in CLASSIFIERS:
-        if clf.tag in config.disabled:
-            continue
+    for clf in classifiers_for(config):
         if clf.requires_checksum and not adapter.has_checksum_functions():
             continue
         if clf.ner_label is not None:

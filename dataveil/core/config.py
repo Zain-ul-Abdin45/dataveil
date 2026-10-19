@@ -14,6 +14,7 @@ standard library.
 from __future__ import annotations
 
 import dataclasses
+import re
 
 
 class ConfigError(ValueError):
@@ -72,6 +73,68 @@ class ProfileConfig:
             raise ConfigError(f"[profile] max_format_signatures must not be negative, got {value}")
 
 
+_TAG_RE = re.compile(r"^[A-Za-z0-9_]+(:[A-Za-z0-9_]+)*$")
+
+# Escapes that mean something different (or nothing) in one of the engines:
+# \b is a word boundary in DuckDB (RE2) but a backspace in Postgres, and
+# \A, \Z, \z and backreferences are not supported by both.
+_NON_PORTABLE_ESCAPES = set("bBAZz123456789")
+
+
+def _check_portable_pattern(tag: str, pattern: str) -> None:
+    """Reject a regex that is invalid, or would match differently on DuckDB
+    and Postgres, before any query runs."""
+    where = f"[[classify.custom]] {tag}"
+    try:
+        re.compile(pattern)
+    except re.error as e:
+        raise ConfigError(f"{where}: invalid pattern {pattern!r}: {e}") from e
+    # DuckDB's ~ matches the whole string, Postgres's ~ any substring; an
+    # anchored pattern means the same on both.
+    # A $ after an odd number of backslashes is a literal dollar sign.
+    trailing_backslashes = len(pattern[:-1]) - len(pattern[:-1].rstrip("\\"))
+    if not pattern.startswith("^") or not pattern.endswith("$") or trailing_backslashes % 2:
+        raise ConfigError(f"{where}: pattern must start with ^ and end with $, got {pattern!r}")
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < len(pattern):
+            if pattern[i + 1] in _NON_PORTABLE_ESCAPES:
+                raise ConfigError(f"{where}: \\{pattern[i + 1]} is not supported the same way on every engine")
+            i += 2
+            continue
+        # Only non-capturing groups: lookarounds, named groups and inline
+        # flags are missing from RE2 or Postgres, or spelled differently.
+        if pattern.startswith("(?", i) and not pattern.startswith("(?:", i):
+            raise ConfigError(f"{where}: only (?:...) groups are supported, not {pattern[i : i + 4]!r}...")
+        i += 1
+
+
+@dataclasses.dataclass(frozen=True)
+class CustomClassifier:
+    """A regex classifier defined in configuration, evaluated like the
+    built-in ones: an aggregate COUNT of matching values, nothing else."""
+
+    tag: str
+    pattern: str
+    name_hints: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tag, str) or not _TAG_RE.match(self.tag):
+            raise ConfigError(
+                f"[[classify.custom]] tag must look like PREFIX:NAME (letters, digits, _), got {self.tag!r}"
+            )
+        if self.tag.lower() == "none":
+            raise ConfigError("[[classify.custom]] tag must not be 'none'")
+        if not isinstance(self.pattern, str) or not self.pattern:
+            raise ConfigError(f"[[classify.custom]] {self.tag}: pattern must be a non-empty string")
+        _check_portable_pattern(self.tag, self.pattern)
+        if not isinstance(self.name_hints, tuple) or not all(isinstance(h, str) and h for h in self.name_hints):
+            raise ConfigError(f"[[classify.custom]] {self.tag}: name_hints must be a list of non-empty strings")
+        # Column names are compared lower-cased.
+        object.__setattr__(self, "name_hints", tuple(h.lower() for h in self.name_hints))
+
+
 @dataclasses.dataclass(frozen=True)
 class ClassifyConfig:
     # A column is tagged when at least this share of its non-null values match.
@@ -82,6 +145,8 @@ class ClassifyConfig:
     ner_max_distinct_values: int = 10_000
     # Tags of built-in classifiers to skip, for example ("PII:PHONE",).
     disabled: tuple[str, ...] = ()
+    # Extra regex classifiers, checked after the built-in ones.
+    custom: tuple[CustomClassifier, ...] = ()
 
     def __post_init__(self) -> None:
         _require_rate("classify", "match_threshold", self.match_threshold)
@@ -97,3 +162,9 @@ class ClassifyConfig:
             )
         if not isinstance(self.disabled, tuple) or not all(isinstance(t, str) for t in self.disabled):
             raise ConfigError(f"[classify] disabled must be a list of tags, got {self.disabled!r}")
+        if not isinstance(self.custom, tuple) or not all(isinstance(c, CustomClassifier) for c in self.custom):
+            raise ConfigError("[classify] custom must be a list of custom classifiers")
+        tags = [c.tag for c in self.custom]
+        duplicates = sorted({t for t in tags if tags.count(t) > 1})
+        if duplicates:
+            raise ConfigError(f"[[classify.custom]] duplicate tag(s): {', '.join(duplicates)}")

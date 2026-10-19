@@ -155,8 +155,8 @@ def profile(table: str) -> dict[str, Any]:
 def propose_cleansing_plan(table: str) -> dict[str, Any]:
     """Everything an agent needs to propose a data-cleansing plan for a
     table: the aggregate-only profile, a local sensitivity classification
-    per column (PII:EMAIL, PII:SSN, PII:PHONE, ... or "none", each with a
-    match_rate), and the closed operation vocabulary apply_cleansing_plan
+    per column (PII:EMAIL, PII:SSN, PII:PHONE, ..., a custom tag from
+    dataveil.toml, or "none", each with a match_rate), and the closed operation vocabulary apply_cleansing_plan
     will accept.
 
     This tool does not call an LLM or propose a plan itself -- it's the

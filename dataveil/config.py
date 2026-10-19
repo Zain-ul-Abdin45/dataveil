@@ -22,6 +22,11 @@ A file named by (1) or (2) must exist. Without either, a missing
     ner_max_distinct_values = 5000    # default 10000
     disabled = ["PII:PHONE"]          # built-in classifiers to skip
 
+    [[classify.custom]]               # extra regex classifiers, any number
+    tag = "PII:CUSTOMER_ID"
+    pattern = "^CUS-[0-9]{8}$"        # must be anchored with ^ and $
+    name_hints = ["customer_id"]      # optional; lowers the bar to name_hint_threshold
+
     [adapter]
     kind = "duckdb"                   # "duckdb", "postgres" or "sqlmesh"
     duckdb_path = "warehouse.duckdb"
@@ -45,8 +50,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .core.classify import CLASSIFIERS
-from .core.config import ClassifyConfig, ConfigError, ProfileConfig
+from .core.classify import CLASSIFIERS, classifiers_for
+from .core.config import ClassifyConfig, ConfigError, CustomClassifier, ProfileConfig
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -120,7 +125,31 @@ def _section(name: str, cls: type[Any], data: object) -> Any:
                 f"[classify] disabled has unknown tag(s): {', '.join(unknown_tags)} (known: {', '.join(sorted(tags))})"
             )
         values["disabled"] = tuple(disabled)
+    if name == "classify" and "custom" in values:
+        values["custom"] = _custom_classifiers(values["custom"])
+        classifiers_for(cls(**values))  # rejects a custom tag that clashes with a built-in one
     return cls(**values)
+
+
+def _custom_classifiers(data: object) -> tuple[CustomClassifier, ...]:
+    if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
+        raise ConfigError("[classify] custom must be an array of tables ([[classify.custom]])")
+    known = {f.name for f in dataclasses.fields(CustomClassifier)}
+    result = []
+    for item in data:
+        unknown = sorted(set(item) - known)
+        if unknown:
+            raise ConfigError(
+                f"[[classify.custom]] unknown key(s): {', '.join(unknown)} (known: {', '.join(sorted(known))})"
+            )
+        missing = sorted({"tag", "pattern"} - set(item))
+        if missing:
+            raise ConfigError(f"[[classify.custom]] missing key(s): {', '.join(missing)}")
+        hints = item.get("name_hints", [])
+        if not isinstance(hints, list):
+            raise ConfigError(f"[[classify.custom]] {item['tag']}: name_hints must be a list of strings")
+        result.append(CustomClassifier(tag=item["tag"], pattern=item["pattern"], name_hints=tuple(hints)))
+    return tuple(result)
 
 
 def parse_config(data: dict[str, Any]) -> Config:

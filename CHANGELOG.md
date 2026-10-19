@@ -14,6 +14,11 @@ change behavior).
   turns built-in classifiers off, and configures the MCP server's adapter
   and audit log. Privacy thresholds can only be made stricter than the
   defaults, and unknown keys are rejected.
+- Custom regex classifiers in `dataveil.toml` (`[[classify.custom]]`, with a
+  tag, an anchored pattern and optional name hints), for identifiers such as
+  internal customer numbers. They run as aggregate counts like the built-in
+  classifiers, on every adapter. Patterns that are invalid, unanchored, or
+  would match differently on DuckDB and Postgres are rejected at load time.
 - `profile_table`, `classify_table` and `classify_column` take an optional
   config argument. Without it they behave as before.
 
