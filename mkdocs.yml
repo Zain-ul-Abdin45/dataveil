@@ -1,0 +1,59 @@
+site_name: dataveil
+site_description: Local data profiling, PII classification, and plan-based cleansing. Aggregate-only, no LLM-authored code.
+site_url: https://zain-ul-abdin45.github.io/dataveil/
+repo_url: https://github.com/Zain-ul-Abdin45/dataveil
+repo_name: Zain-ul-Abdin45/dataveil
+edit_uri: edit/main/docs/
+exclude_docs: |
+  deep-dive.html
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.footer
+    - content.code.copy
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Guides:
+      - Configuration: configuration.md
+      - Classifiers: classifiers.md
+      - Operations: operations.md
+      - Privacy and known limits: privacy.md
+      - MCP server: mcp-server.md
+      - Audit log and approval: audit-and-approval.md
+  - Adapters:
+      - Overview: adapters/index.md
+      - DuckDB: adapters/duckdb.md
+      - Postgres: adapters/postgres.md
+      - SQLMesh: adapters/sqlmesh.md
+      - dbt: adapters/dbt.md
+      - Plugins: adapters/plugins.md
+  - Benchmarks: benchmarks.md
+  - Changelog: changelog.md

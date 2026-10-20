@@ -39,7 +39,7 @@ will not be merged, even if the tests pass.
 1. **Aggregate-only.** Nothing that leaves `profile`/`classify` may contain a
    raw value, a row, or a sample. If a change adds a new statistic, explain in
    the pull request why it cannot reveal a single row, and update
-   [Known limits](README.md#known-limits) if it can in some case.
+   the Known limits in [docs/privacy.md](docs/privacy.md) if it can in some case.
 2. **No LLM-authored code.** The LLM only picks operations from the closed
    vocabulary in `dataveil/core/plan.py`. Do not add an operation that runs
    free-form SQL or code.
@@ -56,7 +56,7 @@ and add an end-to-end test module that skips itself when the backend is not
 available. Look at `dataveil/adapters/postgres.py` as an example.
 
 An adapter that does not belong in dataveil itself can live in its own
-package as a plugin. See [Plugins](README.md#plugins).
+package as a plugin. See [Plugins](https://zain-ul-abdin45.github.io/dataveil/adapters/plugins/).
 
 ## Pull requests
 
