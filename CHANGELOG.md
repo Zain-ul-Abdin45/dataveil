@@ -7,6 +7,8 @@ change behavior).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-20
+
 ### Added
 
 - `dataveil.toml` configuration file, found through `DATAVEIL_CONFIG` or in
@@ -32,6 +34,23 @@ change behavior).
   operations, and benchmark results. The README keeps the overview.
 - `profile_table`, `classify_table` and `classify_column` take an optional
   config argument. Without it they behave as before.
+
+### Changed
+
+- Classification reads each string column once: the non-null count and
+  every regex classifier's match count come from one aggregate query,
+  instead of one query per classifier. Results are unchanged.
+- The Luhn and IBAN checksum functions only run on values that match the
+  classifier's pattern. On DuckDB they ran on every value before, which was
+  most of the classification time.
+- The Postgres checksum functions are declared `PARALLEL SAFE`, so queries
+  that use them can run on several Postgres workers. They were serial
+  before, and the one-query-per-column change made that cost visible.
+- The person-name model no longer runs on a column that a regex classifier
+  has already tagged, such as a column of email addresses.
+- On a 10M-row table, classification now takes 19 s instead of 75 s on
+  DuckDB, 35 s instead of 135 s with the person-name model, and 54 s
+  instead of 115 s on Postgres. See the benchmarks page.
 
 ## [0.3.0] - 2026-10-09
 
@@ -109,7 +128,8 @@ change behavior).
 - Audit logging without values, and an optional plan-approval gate.
 - Standalone MCP server (`dataveil-mcp`).
 
-[Unreleased]: https://github.com/Zain-ul-Abdin45/dataveil/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Zain-ul-Abdin45/dataveil/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Zain-ul-Abdin45/dataveil/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Zain-ul-Abdin45/dataveil/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Zain-ul-Abdin45/dataveil/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Zain-ul-Abdin45/dataveil/releases/tag/v0.1.0
