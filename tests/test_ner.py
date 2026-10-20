@@ -93,3 +93,22 @@ def test_classifier_is_skipped_without_the_model(con, monkeypatch):
     adapter = DuckDBAdapter(con)
     assert adapter.has_ner_function() is False
     assert _classify(con, adapter, "contact", NAMES).tag == "none"
+
+
+@needs_model
+def test_name_model_is_skipped_on_columns_a_regex_already_tagged(con):
+    class Recording(DuckDBAdapter):
+        queries: list = []
+
+        def run_aggregate_query(self, sql):
+            self.queries.append(sql)
+            return super().run_aggregate_query(sql)
+
+    adapter = Recording(con)
+    con.execute("CREATE TABLE people (customer_email VARCHAR, customer VARCHAR)")
+    con.executemany("INSERT INTO people VALUES (?, ?)", [(f"u{i}@example.com", name) for i, name in enumerate(NAMES)])
+    tags = {r.column: r.tag for r in classify_table(adapter, "people")}
+    assert tags == {"customer_email": "PII:EMAIL", "customer": "PII:PERSON_NAME"}
+    ner_queries = [q for q in adapter.queries if "dataveil_ner_label" in q]
+    # "customer" hints at a name, but "customer_email" is already tagged by a regex
+    assert len(ner_queries) == 1 and '"customer"' in ner_queries[0] and "customer_email" not in ner_queries[0]

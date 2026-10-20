@@ -108,3 +108,46 @@ def test_two_adapters_on_one_connection(con):
     con.execute("CREATE TABLE cards (card_number VARCHAR)")
     con.executemany("INSERT INTO cards VALUES (?)", [["4111111111111111"]] * 3)
     assert classify_column(second, "cards", "card_number").tag == "PII:CREDIT_CARD"
+
+
+class _RecordingAdapter(DuckDBAdapter):
+    """A DuckDB adapter that keeps every aggregate query it was sent."""
+
+    def __init__(self, con, **kwargs):
+        super().__init__(con, **kwargs)
+        self.queries = []
+
+    def run_aggregate_query(self, sql):
+        self.queries.append(sql)
+        return super().run_aggregate_query(sql)
+
+
+def test_one_query_per_string_column_and_none_for_other_columns(con):
+    adapter = _RecordingAdapter(con, register_ner_function=False)
+    con.execute("CREATE TABLE t (id INTEGER, email VARCHAR, card VARCHAR, iban VARCHAR)")
+    con.executemany(
+        "INSERT INTO t VALUES (?, ?, ?, ?)", [[i, f"u{i}@example.com", VALID_VISA, VALID_IBAN] for i in range(5)]
+    )
+    adapter.queries.clear()
+    tags = {r.column: (r.tag, r.match_rate) for r in classify_table(adapter, "t")}
+    assert tags == {
+        "id": ("none", 0.0),
+        "email": ("PII:EMAIL", 1.0),
+        "card": ("PII:CREDIT_CARD", 1.0),
+        "iban": ("PII:IBAN", 1.0),
+    }
+    # get_schema's own lookup also goes through run_aggregate_query; count only classification
+    assert len([q for q in adapter.queries if "information_schema" not in q]) == 3
+
+
+def test_checksum_functions_only_run_on_values_matching_the_pattern(con):
+    adapter = _RecordingAdapter(con, register_ner_function=False)
+    con.execute("CREATE TABLE t (card VARCHAR)")
+    # Luhn-invalid card-shaped values are still counted as non-matching
+    con.executemany("INSERT INTO t VALUES (?)", [[VALID_VISA]] * 3 + [["4111111111111112"]] * 2)
+    result = classify_column(adapter, "t", "card")
+    assert (result.tag, result.match_rate) == ("PII:CREDIT_CARD", 0.6)
+    (sql,) = adapter.queries[-1:]
+    assert 'CASE WHEN CAST("card" AS VARCHAR) ~ ' in sql
+    assert "THEN dataveil_luhn_valid(" in sql and "THEN dataveil_iban_valid(" in sql
+    assert " AND dataveil_" not in sql
