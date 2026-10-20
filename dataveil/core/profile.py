@@ -18,23 +18,27 @@ from typing import Any
 
 from .adapter import Adapter
 from .coltypes import is_numeric_type, is_string_type
+from .config import ProfileConfig
 from .sql import quote_ident
+
+# The thresholds below are the defaults of ProfileConfig; a dataveil.toml
+# can make them stricter (see core/config.py), never looser.
 
 # Bound on how many distinct generalized format signatures we return per
 # string column — a format signature is not a raw value, but an unbounded
 # list of them for a high-cardinality column is still unnecessary detail.
-MAX_FORMAT_SIGNATURES = 20
+MAX_FORMAT_SIGNATURES = ProfileConfig.max_format_signatures
 
 # Numeric stats are withheld unless the column has enough rows and enough
 # distinct values that no single row is trivially recoverable from them.
 # Conservative heuristics, not a privacy guarantee.
-MIN_ROWS_FOR_NUMERIC_STATS = 10
-MIN_DISTINCT_FOR_NUMERIC_STATS = 3
+MIN_ROWS_FOR_NUMERIC_STATS = ProfileConfig.min_rows_for_numeric_stats
+MIN_DISTINCT_FOR_NUMERIC_STATS = ProfileConfig.min_distinct_for_numeric_stats
 
 # min and max are literal cell values. One is only returned when at least this
 # many rows have that exact value, so a unique outlier (one person's salary)
 # is withheld, while a shared bound (age 18 for many rows) is kept.
-MIN_EXTREME_COUNT = 5
+MIN_EXTREME_COUNT = ProfileConfig.min_extreme_count
 
 NO_ALPHANUMERIC_SIGNATURE = "<punctuation or whitespace only>"
 
@@ -42,7 +46,7 @@ NO_ALPHANUMERIC_SIGNATURE = "<punctuation or whitespace only>"
 # email shape, for example), so it is only returned when at least this many
 # non-null values have it. Rarer signatures are reported together as one
 # bucket with their total count.
-MIN_SIGNATURE_COUNT = 5
+MIN_SIGNATURE_COUNT = ProfileConfig.min_signature_count
 OTHER_SIGNATURES = "<other signatures>"
 
 
@@ -120,17 +124,22 @@ class TableProfile:
         }
 
 
-def profile_table(adapter: Adapter, table: str) -> TableProfile:
+def profile_table(adapter: Adapter, table: str, config: ProfileConfig | None = None) -> TableProfile:
+    config = config or ProfileConfig()
     schema = adapter.get_schema(table)
     qt = quote_ident(table)
 
     row_count = adapter.run_aggregate_query(f"SELECT COUNT(*) AS n FROM {qt}")[0]["n"]
 
-    columns = [_profile_column(adapter, table, name, type_name, row_count) for name, type_name in schema.items()]
+    columns = [
+        _profile_column(adapter, table, name, type_name, row_count, config) for name, type_name in schema.items()
+    ]
     return TableProfile(table=table, row_count=row_count, columns=columns)
 
 
-def _profile_column(adapter: Adapter, table: str, name: str, type_name: str, row_count: int) -> ColumnProfile:
+def _profile_column(
+    adapter: Adapter, table: str, name: str, type_name: str, row_count: int, config: ProfileConfig
+) -> ColumnProfile:
     qt = quote_ident(table)
     qc = quote_ident(name)
 
@@ -151,11 +160,11 @@ def _profile_column(adapter: Adapter, table: str, name: str, type_name: str, row
         cardinality_ratio=cardinality_ratio,
     )
 
-    if is_numeric_type(type_name) and _numeric_stats_allowed(row_count, distinct_count):
+    if is_numeric_type(type_name) and _numeric_stats_allowed(row_count, distinct_count, config):
         # The standard ordered-set aggregate syntax (not DuckDB's
         # QUANTILE_CONT(col, frac) shorthand) -- both DuckDB and Postgres
         # support this form, so profile_table works unmodified across adapters.
-        # The MIN_EXTREME_COUNT check runs in SQL, so a withheld extreme never
+        # The min_extreme_count check runs in SQL, so a withheld extreme never
         # leaves the database.
         stats = adapter.run_aggregate_query(
             f"WITH v AS (SELECT {qc} AS x FROM {qt} WHERE {qc} IS NOT NULL), "
@@ -166,8 +175,8 @@ def _profile_column(adapter: Adapter, table: str, name: str, type_name: str, row
             f"PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY x) AS p25, "
             f"PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x) AS p50, "
             f"PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY x) AS p75 FROM v) "
-            f"SELECT CASE WHEN c.lo_n >= {MIN_EXTREME_COUNT} THEN e.lo END AS min, "
-            f"CASE WHEN c.hi_n >= {MIN_EXTREME_COUNT} THEN e.hi END AS max, "
+            f"SELECT CASE WHEN c.lo_n >= {config.min_extreme_count} THEN e.lo END AS min, "
+            f"CASE WHEN c.hi_n >= {config.min_extreme_count} THEN e.hi END AS max, "
             f"s.mean, s.stddev, s.p25, s.p50, s.p75 FROM e CROSS JOIN c CROSS JOIN s"
         )[0]
         profile.min = stats["min"]
@@ -186,16 +195,18 @@ def _profile_column(adapter: Adapter, table: str, name: str, type_name: str, row
         profile.min_length = length_stats["min_length"]
         profile.max_length = length_stats["max_length"]
         profile.avg_length = length_stats["avg_length"]
-        profile.format_signatures = _format_signatures(adapter, table, name, row_count - null_count)
+        profile.format_signatures = _format_signatures(adapter, table, name, row_count - null_count, config)
 
     return profile
 
 
-def _numeric_stats_allowed(row_count: int, distinct_count: int) -> bool:
-    return row_count >= MIN_ROWS_FOR_NUMERIC_STATS and distinct_count >= MIN_DISTINCT_FOR_NUMERIC_STATS
+def _numeric_stats_allowed(row_count: int, distinct_count: int, config: ProfileConfig) -> bool:
+    return row_count >= config.min_rows_for_numeric_stats and distinct_count >= config.min_distinct_for_numeric_stats
 
 
-def _format_signatures(adapter: Adapter, table: str, column: str, non_null_count: int) -> list[FormatSignature]:
+def _format_signatures(
+    adapter: Adapter, table: str, column: str, non_null_count: int, config: ProfileConfig
+) -> list[FormatSignature]:
     qt = quote_ident(table)
     qc = quote_ident(column)
     value = f"CAST({qc} AS VARCHAR)"
@@ -213,11 +224,11 @@ def _format_signatures(adapter: Adapter, table: str, column: str, non_null_count
     # this process. ORDER BY signature makes ties deterministic.
     rows = adapter.run_aggregate_query(
         f"SELECT {signature_expr} AS signature, COUNT(*) AS n FROM {qt} "
-        f"WHERE {qc} IS NOT NULL GROUP BY signature HAVING COUNT(*) >= {MIN_SIGNATURE_COUNT} "
-        f"ORDER BY n DESC, signature LIMIT {MAX_FORMAT_SIGNATURES}"
+        f"WHERE {qc} IS NOT NULL GROUP BY signature HAVING COUNT(*) >= {config.min_signature_count} "
+        f"ORDER BY n DESC, signature LIMIT {config.max_format_signatures}"
     )
     signatures = [FormatSignature(signature=r["signature"], count=r["n"]) for r in rows]
-    # Values with a rare signature, or beyond MAX_FORMAT_SIGNATURES.
+    # Values with a rare signature, or beyond max_format_signatures.
     other_count = non_null_count - sum(s.count for s in signatures)
     if other_count > 0:
         signatures.append(FormatSignature(signature=OTHER_SIGNATURES, count=other_count))

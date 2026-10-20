@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dataveil"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local data profiling, PII classification, and plan-based cleansing — aggregate-only, no LLM-authored code."
 readme = "README.md"
 license = "MIT"
@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Database",
     "Topic :: Security",
 ]
-dependencies = []
+dependencies = ['tomli>=1.1; python_version < "3.11"']
 
 [project.optional-dependencies]
 duckdb = ["duckdb>=1.0.0", "numpy>=1.24"]
@@ -45,6 +45,15 @@ dev = [
 
 [project.scripts]
 dataveil-mcp = "dataveil.server:main"
+
+# The built-in adapters and classifiers register like any plugin.
+[project.entry-points."dataveil.adapters"]
+duckdb = "dataveil.adapters.factories:duckdb_adapter"
+postgres = "dataveil.adapters.factories:postgres_adapter"
+sqlmesh = "dataveil.adapters.factories:sqlmesh_adapter"
+
+[project.entry-points."dataveil.classifiers"]
+builtin = "dataveil.core.classify:CLASSIFIERS"
 
 [project.urls]
 Homepage = "https://github.com/Zain-ul-Abdin45/dataveil"

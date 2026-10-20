@@ -15,11 +15,15 @@ from mcp.server.mcpserver.exceptions import ToolError
 def duckdb_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DATAVEIL_ADAPTER", "duckdb")
     monkeypatch.setenv("DATAVEIL_DUCKDB_PATH", str(tmp_path / "test.duckdb"))
-    from dataveil.server import get_adapter
+    monkeypatch.delenv("DATAVEIL_CONFIG", raising=False)
+    monkeypatch.chdir(tmp_path)  # no stray ./dataveil.toml
+    from dataveil.server import get_adapter, get_config
 
     get_adapter.cache_clear()
+    get_config.cache_clear()
     yield
     get_adapter.cache_clear()
+    get_config.cache_clear()
 
 
 def _make_table():

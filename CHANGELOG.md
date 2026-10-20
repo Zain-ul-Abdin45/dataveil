@@ -7,6 +7,31 @@ change behavior).
 
 ## [Unreleased]
 
+### Added
+
+- `dataveil.toml` configuration file, found through `DATAVEIL_CONFIG` or in
+  the working directory. It sets the profile and classification thresholds,
+  turns built-in classifiers off, and configures the MCP server's adapter
+  and audit log. Privacy thresholds can only be made stricter than the
+  defaults, and unknown keys are rejected.
+- Custom regex classifiers in `dataveil.toml` (`[[classify.custom]]`, with a
+  tag, an anchored pattern and optional name hints), for identifiers such as
+  internal customer numbers. They run as aggregate counts like the built-in
+  classifiers, on every adapter. Patterns that are invalid, unanchored, or
+  would match differently on DuckDB and Postgres are rejected at load time.
+- Adapter and classifier plugins through the `dataveil.adapters` and
+  `dataveil.classifiers` entry point groups. The built-in adapters and
+  classifiers are registered the same way. A classifier plugin provides
+  definitions, not code, so it can only produce aggregate counts. Plugin
+  adapters get their settings from `[adapter.options]`.
+- `benchmarks/run.py` times profiling and classification on synthetic tables
+  of 1M and 10M rows (DuckDB, and Postgres) and counts the queries per
+  column. A non-blocking CI job runs it weekly and on changes to the core.
+- `profile_table`, `classify_table` and `classify_column` take an optional
+  config argument. Without it they behave as before.
+
+## [0.3.0] - 2026-10-09
+
 ### Security
 
 - `min` and `max` are only returned when at least 5 rows share that exact
@@ -81,6 +106,7 @@ change behavior).
 - Audit logging without values, and an optional plan-approval gate.
 - Standalone MCP server (`dataveil-mcp`).
 
-[Unreleased]: https://github.com/Zain-ul-Abdin45/dataveil/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Zain-ul-Abdin45/dataveil/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Zain-ul-Abdin45/dataveil/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Zain-ul-Abdin45/dataveil/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Zain-ul-Abdin45/dataveil/releases/tag/v0.1.0

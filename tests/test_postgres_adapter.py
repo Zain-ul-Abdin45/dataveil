@@ -281,3 +281,21 @@ def test_dbt_adapter_on_postgres(adapter, engine, tmp_path):
     finally:
         with engine.begin() as conn:
             conn.execute(sa.text(f'DROP SCHEMA "{schema}" CASCADE'))
+
+
+def test_custom_regex_classifier_from_config(adapter, engine, table):
+    from dataveil.config import parse_config
+
+    config = parse_config(
+        {"classify": {"custom": [{"tag": "PII:CUSTOMER_ID", "pattern": "^CUS-[0-9]{8}$", "name_hints": ["customer"]}]}}
+    ).classify
+    with engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE TABLE "{table}" (customer TEXT, note TEXT)'))
+        # "note" contains the id inside longer text: an anchored pattern must not
+        # match it, even though Postgres's ~ is a substring match.
+        conn.execute(
+            sa.text(f'INSERT INTO "{table}" VALUES (:c, :n)'),
+            [{"c": f"CUS-{i:08d}" if i < 6 else "walk-in", "n": f"ref CUS-{i:08d} ok"} for i in range(10)],
+        )
+    tags = {r.column: (r.tag, r.match_rate) for r in classify_table(adapter, table, config)}
+    assert tags == {"customer": ("PII:CUSTOMER_ID", 0.6), "note": ("none", 0.0)}

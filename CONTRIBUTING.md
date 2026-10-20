@@ -55,6 +55,9 @@ docstring describes the contract), add an optional extra in `pyproject.toml`,
 and add an end-to-end test module that skips itself when the backend is not
 available. Look at `dataveil/adapters/postgres.py` as an example.
 
+An adapter that does not belong in dataveil itself can live in its own
+package as a plugin. See [Plugins](README.md#plugins).
+
 ## Pull requests
 
 - Open an issue first for anything larger than a small fix.

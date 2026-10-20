@@ -253,6 +253,44 @@ first integration, not the whole project. Writing a new adapter means
 implementing `dataveil.core.adapter.Adapter`'s five methods; see that
 module's docstring for the contract.
 
+### Plugins
+
+A separate package can add adapters and classifiers without changing
+dataveil. It registers them as entry points, and the built-in ones are
+registered the same way:
+
+```toml
+# the plugin package's pyproject.toml
+[project.entry-points."dataveil.adapters"]
+acme = "acme_dataveil:make_adapter"
+
+[project.entry-points."dataveil.classifiers"]
+acme = "acme_dataveil:CLASSIFIERS"
+```
+
+```python
+# acme_dataveil.py
+from dataveil.core.config import CustomClassifier
+
+CLASSIFIERS = [CustomClassifier(tag="ACME:ACCOUNT_ID", pattern="^AC[0-9]{8}$", name_hints=("account",))]
+
+def make_adapter(options):  # options: the [adapter.options] table, as strings
+    return AcmeAdapter(options["account"])
+```
+
+After `pip install acme-dataveil`, every classification includes
+`ACME:ACCOUNT_ID`, and `DATAVEIL_ADAPTER=acme` or `[adapter] kind = "acme"`
+selects the adapter.
+
+A classifier plugin provides definitions, not code: a `CustomClassifier`
+or `Classifier`, or a list of them. dataveil runs each one as the same
+aggregate `COUNT` as a built-in classifier, so a plugin can only produce
+counts. Its patterns follow the same rules as custom classifiers. A broken
+plugin, a pattern that fails those rules, or a tag that is already taken
+stops classification with an error instead of being skipped. An adapter
+plugin's factory must return an `Adapter`, and it must not reuse a
+built-in adapter name.
+
 ## Audit logging and plan approval
 
 `dataveil.audit.AuditLog` is an append-only JSON-lines log — one entry per
@@ -299,6 +337,70 @@ env var sqlmesh-mcp uses). Four tools: `list_tables`, `profile`,
 `destructiveHint`) -- the same three-tool shape as sqlmesh-mcp's
 dataveil-backed tools, just against `table` instead of `model_name`, since
 there's no SQLMesh Context or physical-snapshot concept here.
+
+## Configuration
+
+Settings live in a `dataveil.toml` file. dataveil reads the file named by
+`DATAVEIL_CONFIG`, or `./dataveil.toml` if that variable is not set. Without
+a file, the defaults below apply. Every section and key is optional.
+
+```toml
+[profile]
+min_signature_count = 5               # can only be raised
+min_extreme_count = 5                 # can only be raised
+min_rows_for_numeric_stats = 10       # can only be raised
+min_distinct_for_numeric_stats = 3    # can only be raised
+max_format_signatures = 20            # can only be lowered
+
+[classify]
+match_threshold = 0.8                 # share of values that must match
+name_hint_threshold = 0.5             # lower bar when the column name hints at the tag
+ner_max_distinct_values = 10000       # values the name model labels per column
+disabled = []                         # built-in tags to skip, e.g. ["PII:PHONE"]
+
+[[classify.custom]]                   # your own identifiers; repeat for more
+tag = "PII:CUSTOMER_ID"
+pattern = "^CUS-[0-9]{8}$"
+name_hints = ["customer_id", "cust_no"]  # optional
+
+[adapter]                             # used by dataveil-mcp
+kind = "duckdb"                       # "duckdb", "postgres", "sqlmesh" or a plugin
+duckdb_path = "warehouse.duckdb"
+postgres_url = "postgresql+psycopg2://localhost/analytics"
+sqlmesh_project_path = "path/to/project"
+
+[adapter.options]                     # passed to an adapter plugin, see Plugins
+account = "acme"
+
+[audit]
+log_path = ".dataveil/audit.jsonl"
+```
+
+The privacy thresholds can only be made stricter. A value that would make
+the profile reveal more, such as `min_signature_count = 2`, is rejected
+when the file is loaded. Unknown sections, keys and tags are also errors,
+so a typo cannot silently fall back to a default.
+
+A custom classifier runs like the built-in regexes: one aggregate `COUNT`
+per column, with the same thresholds. Its tag cannot reuse a built-in one.
+Patterns are checked when the file is loaded, and must work the same on
+DuckDB and Postgres. So a pattern must be anchored with `^` and `$`, and
+may not use lookarounds, inline flags, named groups, backreferences, or
+`\b`, `\A` and `\Z`.
+
+The environment variables of the MCP server take precedence over
+`[adapter]` and `[audit]`. Keep credentials out of the file and pass a
+Postgres URL with a password in `DATAVEIL_POSTGRES_URL`.
+
+In library code, load the file and pass its sections explicitly:
+
+```python
+from dataveil.config import load_config
+
+config = load_config()
+profile_table(adapter, "customers", config.profile)
+classify_table(adapter, "customers", config.classify)
+```
 
 ## Development
 

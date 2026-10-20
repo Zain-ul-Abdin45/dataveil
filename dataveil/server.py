@@ -3,14 +3,19 @@ against whichever adapter is configured -- usable outside SQLMesh entirely,
 not just via sqlmesh-mcp (PLAN.md Phase 6, built once there was more than
 one adapter to prove this wasn't SQLMesh-specific).
 
-Configure via DATAVEIL_ADAPTER (one of "duckdb", "postgres", "sqlmesh") plus
-that adapter's own setting:
+Configure via DATAVEIL_ADAPTER (one of "duckdb", "postgres", "sqlmesh", or
+the name of an installed adapter plugin) plus that adapter's own setting:
 
   - duckdb:   DATAVEIL_DUCKDB_PATH -- a file path, or ":memory:" (default)
   - postgres: DATAVEIL_POSTGRES_URL -- a SQLAlchemy URL (required)
   - sqlmesh:  SQLMESH_PROJECT_PATH -- a directory with config.yaml/models/
               (required; same env var sqlmesh-mcp uses, for anyone running
               both against the same project)
+
+or the [adapter] section of a dataveil.toml (see dataveil/config.py). A
+plugin adapter gets its settings from [adapter.options]. The
+environment variables take precedence over the file. The file's [profile]
+and [classify] thresholds apply to every tool call.
 
 Every tool here (except list_tables) matches sqlmesh-mcp's
 profile_model/propose_cleansing_plan/apply_cleansing_plan one for one, just
@@ -33,7 +38,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 
 from .audit import AuditLog
-from .core.adapter import Adapter
+from .config import Config, load_config
+from .core.adapter import Adapter, AdapterNotConfiguredError, adapter_names, load_adapter_factory
 from .core.classify import classify_table
 from .core.execute import ExecutionError, execute_plan
 from .core.plan import PlanValidationError, operation_vocabulary
@@ -48,50 +54,49 @@ server = MCPServer("dataveil")
 # SDK derives an output schema from the annotation and changes what clients receive.
 
 
-class AdapterNotConfiguredError(RuntimeError):
-    pass
+@lru_cache(maxsize=1)
+def get_config() -> Config:
+    return load_config()
+
+
+def _setting(env_var: str, from_file: str | None) -> str | None:
+    return os.environ.get(env_var) or from_file
+
+
+# The built-in adapters' one setting each: option name, environment variable,
+# [adapter] key, and whether it is required.
+_BUILTIN_SETTINGS = {
+    "duckdb": ("path", "DATAVEIL_DUCKDB_PATH", "duckdb_path", False),
+    "postgres": ("url", "DATAVEIL_POSTGRES_URL", "postgres_url", True),
+    "sqlmesh": ("project_path", "SQLMESH_PROJECT_PATH", "sqlmesh_project_path", True),
+}
 
 
 @lru_cache(maxsize=1)
 def get_adapter() -> Adapter:
-    kind = os.environ.get("DATAVEIL_ADAPTER")
+    settings = get_config().adapter
+    kind = _setting("DATAVEIL_ADAPTER", settings.kind)
+    names = adapter_names()
+    if not kind or kind not in names:
+        raise AdapterNotConfiguredError(
+            "DATAVEIL_ADAPTER is not set (or is unrecognized), nor [adapter] kind in dataveil.toml -- "
+            f"must be one of {', '.join(repr(n) for n in names)}"
+        )
 
-    if kind == "duckdb":
-        import duckdb
-
-        from .adapters.duckdb import DuckDBAdapter
-
-        path = os.environ.get("DATAVEIL_DUCKDB_PATH", ":memory:")
-        return DuckDBAdapter(duckdb.connect(path))
-
-    if kind == "postgres":
-        import sqlalchemy as sa
-
-        from .adapters.postgres import PostgresAdapter
-
-        url = os.environ.get("DATAVEIL_POSTGRES_URL")
-        if not url:
-            raise AdapterNotConfiguredError("DATAVEIL_POSTGRES_URL is not set")
-        return PostgresAdapter(sa.create_engine(url))
-
-    if kind == "sqlmesh":
-        from sqlmesh.core.context import Context
-
-        from .adapters.sqlmesh import SQLMeshAdapter
-
-        project_path = os.environ.get("SQLMESH_PROJECT_PATH")
-        if not project_path:
-            raise AdapterNotConfiguredError("SQLMESH_PROJECT_PATH is not set")
-        return SQLMeshAdapter(Context(paths=project_path))
-
-    raise AdapterNotConfiguredError(
-        "DATAVEIL_ADAPTER is not set (or is unrecognized) -- must be one of 'duckdb', 'postgres', 'sqlmesh'"
-    )
+    options = dict(settings.options)
+    if kind in _BUILTIN_SETTINGS:
+        option, env_var, key, required = _BUILTIN_SETTINGS[kind]
+        value = _setting(env_var, getattr(settings, key))
+        if required and not value:
+            raise AdapterNotConfiguredError(f"{env_var} is not set (nor [adapter] {key})")
+        if value:
+            options[option] = value
+    return load_adapter_factory(kind)(options)
 
 
 def _audit_log() -> AuditLog:
     default_path = Path(".dataveil") / "audit.jsonl"
-    return AuditLog(os.environ.get("DATAVEIL_AUDIT_LOG_PATH", str(default_path)))
+    return AuditLog(_setting("DATAVEIL_AUDIT_LOG_PATH", get_config().audit.log_path) or str(default_path))
 
 
 def _translate_errors(fn: Callable[P, R]) -> Callable[P, R]:
@@ -129,7 +134,7 @@ def profile(table: str) -> dict[str, Any]:
     for small or constant columns. See README's Known limits.
     """
     adapter = get_adapter()
-    result = profile_table(adapter, table).to_dict()
+    result = profile_table(adapter, table, get_config().profile).to_dict()
     _audit_log().record("profile", table, {"row_count": result["row_count"]})
     return result
 
@@ -139,8 +144,8 @@ def profile(table: str) -> dict[str, Any]:
 def propose_cleansing_plan(table: str) -> dict[str, Any]:
     """Everything an agent needs to propose a data-cleansing plan for a
     table: the aggregate-only profile, a local sensitivity classification
-    per column (PII:EMAIL, PII:SSN, PII:PHONE, ... or "none", each with a
-    match_rate), and the closed operation vocabulary apply_cleansing_plan
+    per column (PII:EMAIL, PII:SSN, PII:PHONE, ..., a custom tag from
+    dataveil.toml, or "none", each with a match_rate), and the closed operation vocabulary apply_cleansing_plan
     will accept.
 
     This tool does not call an LLM or propose a plan itself -- it's the
@@ -151,8 +156,9 @@ def propose_cleansing_plan(table: str) -> dict[str, Any]:
     apply_cleansing_plan.
     """
     adapter = get_adapter()
-    profile_result = profile_table(adapter, table)
-    classifications = classify_table(adapter, table)
+    config = get_config()
+    profile_result = profile_table(adapter, table, config.profile)
+    classifications = classify_table(adapter, table, config.classify)
     _audit_log().record("classify", table, {"tags": {c.column: c.tag for c in classifications}})
     return {
         "table": table,
