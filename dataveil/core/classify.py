@@ -222,50 +222,64 @@ def _classify_column(
 
     qt = quote_ident(table)
     qc = quote_ident(column)
+    value = f"CAST({qc} AS VARCHAR)"
 
-    non_null = adapter.run_aggregate_query(f"SELECT COUNT({qc}) AS n FROM {qt}")[0]["n"]
+    usable = [
+        clf
+        for clf in classifiers
+        if not (clf.requires_checksum and not adapter.has_checksum_functions())
+        and not (clf.ner_label is not None and not adapter.has_ner_function())
+    ]
+    regex = [clf for clf in usable if clf.pattern is not None]
+
+    # One scan per column: the non-null count and every regex classifier's
+    # match count come back from the same aggregate query, one FILTER each.
+    counts = [f"COUNT({qc}) AS non_null"]
+    for i, clf in enumerate(regex):
+        counts.append(f"COUNT(*) FILTER (WHERE {_regex_predicate(clf, value)}) AS m{i}")
+    row = adapter.run_aggregate_query(f"SELECT {', '.join(counts)} FROM {qt}")[0]
+    non_null = row["non_null"]
     if non_null == 0:
         return ClassificationResult(column=column, tag=NONE_TAG, match_rate=0.0)
+    rates = {id(clf): (row[f"m{i}"] or 0) / non_null for i, clf in enumerate(regex)}
+
+    def threshold(clf: Classifier) -> float:
+        name_hinted = any(hint in column.lower() for hint in clf.name_hints)
+        return config.name_hint_threshold if name_hinted else config.match_threshold
+
+    # The name model is slow, so it only runs on columns no regex classifier
+    # has tagged: a column of emails or phone numbers is not a name column.
+    regex_tagged = any(rates[id(clf)] >= threshold(clf) for clf in regex)
 
     best_tag = NONE_TAG
     best_rate = 0.0
-
-    for clf in classifiers:
-        if clf.requires_checksum and not adapter.has_checksum_functions():
-            continue
+    for clf in usable:
         if clf.ner_label is not None:
-            if not adapter.has_ner_function():
+            if regex_tagged:
                 continue
             match_rate = _ner_match_rate(adapter, qt, qc, clf.ner_label, config.ner_max_distinct_values)
-            name_hinted = any(hint in column.lower() for hint in clf.name_hints)
-            threshold = config.name_hint_threshold if name_hinted else config.match_threshold
-            if match_rate >= threshold and match_rate > best_rate:
-                best_tag, best_rate = clf.tag, match_rate
-            continue
-        assert clf.pattern is not None
-
-        # The '~' POSIX match operator (not the regexp_matches() function) --
-        # DuckDB and Postgres both support it as a boolean predicate, but
-        # Postgres's regexp_matches() is a set-returning function and can't
-        # be used inside a FILTER (WHERE ...) clause at all.
-        predicate = f"CAST({qc} AS VARCHAR) ~ '{_escape_sql_literal(clf.pattern)}'"
-        if clf.requires_checksum == "luhn":
-            predicate += f" AND dataveil_luhn_valid(CAST({qc} AS VARCHAR))"
-        elif clf.requires_checksum == "iban":
-            predicate += f" AND dataveil_iban_valid(CAST({qc} AS VARCHAR))"
-
-        matches = adapter.run_aggregate_query(
-            f"SELECT COUNT(*) FILTER (WHERE {predicate}) AS n FROM {qt} WHERE {qc} IS NOT NULL"
-        )[0]["n"]
-        match_rate = matches / non_null
-
-        name_hinted = any(hint in column.lower() for hint in clf.name_hints)
-        threshold = config.name_hint_threshold if name_hinted else config.match_threshold
-
-        if match_rate >= threshold and match_rate > best_rate:
+        else:
+            match_rate = rates[id(clf)]
+        if match_rate >= threshold(clf) and match_rate > best_rate:
             best_tag, best_rate = clf.tag, match_rate
 
     return ClassificationResult(column=column, tag=best_tag, match_rate=best_rate)
+
+
+def _regex_predicate(clf: Classifier, value: str) -> str:
+    assert clf.pattern is not None
+    # The '~' POSIX match operator (not the regexp_matches() function) --
+    # DuckDB and Postgres both support it as a boolean predicate, but
+    # Postgres's regexp_matches() is a set-returning function and can't
+    # be used inside a FILTER (WHERE ...) clause at all.
+    match = f"{value} ~ '{_escape_sql_literal(clf.pattern)}'"
+    if clf.requires_checksum is None:
+        return match
+    function = {"luhn": "dataveil_luhn_valid", "iban": "dataveil_iban_valid"}[clf.requires_checksum]
+    # CASE, not AND: DuckDB evaluates both sides of an AND for a whole
+    # vector, so the (Python) checksum function would run on every value.
+    # CASE only calls it on values that match the pattern.
+    return f"CASE WHEN {match} THEN {function}({value}) ELSE false END"
 
 
 def _ner_match_rate(adapter: Adapter, qt: str, qc: str, label: str, max_distinct_values: int) -> float:

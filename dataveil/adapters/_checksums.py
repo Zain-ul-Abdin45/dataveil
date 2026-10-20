@@ -81,7 +81,7 @@ BEGIN
     END LOOP;
     RETURN total % 10 = 0;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
 """
 
 IBAN_FUNCTION_SQL = """
@@ -116,5 +116,5 @@ BEGIN
     END LOOP;
     RETURN (numeric_str::NUMERIC % 97) = 1;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
 """

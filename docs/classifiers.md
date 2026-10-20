@@ -31,6 +31,12 @@ skipped there. Addresses are not classified yet.
 | `PII:IBAN` | IBAN shape, mod-97 valid | iban |
 | `PII:PERSON_NAME` | person names, found by a local spaCy model | name, customer, contact, person |
 
+Each string column is read once for all regex and checksum classifiers:
+one aggregate query with a `COUNT(*) FILTER (...)` per classifier. The
+checksum functions only run on values that match the pattern. The name
+model is slow, so it only runs on a column that no regex classifier has
+already tagged.
+
 Non-string columns are never classified: casting a date to text would
 make `2020-01-01` look like a phone number.
 
