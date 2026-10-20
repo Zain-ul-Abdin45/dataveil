@@ -27,6 +27,9 @@ change behavior).
 - `benchmarks/run.py` times profiling and classification on synthetic tables
   of 1M and 10M rows (DuckDB, and Postgres) and counts the queries per
   column. A non-blocking CI job runs it weekly and on changes to the core.
+- Documentation site (MkDocs Material) with getting started, configuration
+  reference, one page per adapter, plugins, privacy and known limits,
+  operations, and benchmark results. The README keeps the overview.
 - `profile_table`, `classify_table` and `classify_column` take an optional
   config argument. Without it they behave as before.
 

@@ -138,269 +138,33 @@ flags the PII columns, and a 9-step plan (`trim_whitespace`,
 up -- in the seeded run, 12 duplicate rows removed, every email/SSN masked,
 ages imputed, dates normalized to ISO 8601, casing standardized.
 
-## Operation vocabulary (v1)
+## Documentation
 
-| Operation | Does |
-|---|---|
-| `mask` | Replace values (`hash` / `partial` / `constant`) |
-| `drop_column` | Remove a column entirely |
-| `impute` | Fill nulls (`mean` / `median` / `mode` / `constant`) |
-| `standardize_case` | Normalize text casing (`upper` / `lower` / `title`) |
-| `trim_whitespace` | Strip leading/trailing whitespace |
-| `dedupe_rows` | Remove duplicate rows on a key set |
-| `bucket_numeric` | Bin a numeric column (`bin_width` or explicit `bins`) |
-| `parse_date` | Normalize a date/time format (format given explicitly) |
+The full documentation is at **[zain-ul-abdin45.github.io/dataveil](https://zain-ul-abdin45.github.io/dataveil/)**:
 
-Every operation has a fixed parameter schema (`dataveil.core.plan.OPERATIONS`)
-checked by `validate_plan`/`execute_plan` before anything runs.
-
-## Sensitivity classifiers (v1)
-
-Local, deterministic pattern + checksum matching (Presidio-style), run as
-aggregate `COUNT`s so matched values never leave the adapter:
-`PII:EMAIL`, `PII:SSN`, `PII:PHONE`, `PII:CREDIT_CARD` (Luhn-checked),
-`PII:IBAN` (mod-97 checked).
-
-`PII:PERSON_NAME` needs the optional `ner` extra and spaCy's small English
-model (`en_core_web_sm`, MIT, runs offline). The model labels each distinct
-value inside the database engine, as a DuckDB function, so only a count
-reaches dataveil's core. It works on the DuckDB adapter and on SQLMesh or dbt
-projects that run on DuckDB; Postgres cannot run Python functions, so it is
-skipped there. Addresses are not classified yet.
+- [Getting started](https://zain-ul-abdin45.github.io/dataveil/getting-started/)
+- [Configuration](https://zain-ul-abdin45.github.io/dataveil/configuration/): every key of `dataveil.toml`, including custom classifiers
+- [Classifiers](https://zain-ul-abdin45.github.io/dataveil/classifiers/) and [operations](https://zain-ul-abdin45.github.io/dataveil/operations/)
+- [Adapters](https://zain-ul-abdin45.github.io/dataveil/adapters/): DuckDB, Postgres, SQLMesh, dbt, and [plugins](https://zain-ul-abdin45.github.io/dataveil/adapters/plugins/)
+- [MCP server](https://zain-ul-abdin45.github.io/dataveil/mcp-server/) and [audit log and approval](https://zain-ul-abdin45.github.io/dataveil/audit-and-approval/)
+- [Benchmarks](https://zain-ul-abdin45.github.io/dataveil/benchmarks/) on 1M and 10M row tables
 
 ## Known limits
 
 The profile is aggregate-only, but aggregate does not always mean it cannot
-reveal a value. What the code does, and where it stops short:
+reveal a value. In short:
 
-- **Numeric stats are withheld for small or constant columns.** `min`, `max`,
-  `mean`, `stddev` and the percentiles are only returned when the table has at
-  least 10 rows and the column at least 3 distinct values. Below that, a single
-  row could be recovered from them, so they are omitted entirely. The
-  thresholds are conservative heuristics, not a privacy guarantee.
-- **`min` and `max` are only returned when they are shared.** They are literal
-  cell values, so each one is returned only when at least `MIN_EXTREME_COUNT`
-  (5) rows have that exact value. A unique outlier (the largest salary, for
-  example) is withheld; a shared bound (age 18 for many rows) is kept.
-- **Percentiles and the mean can still equal a cell value.** `p25`, `p50` and
-  `p75` are exact cell values when the row count lines up, and `mean` and
-  `stddev` describe the whole column. They are not tied to an outlier, but
-  they are not anonymized either.
-- **Format signatures are generalized, but some structure is kept.** Letters
-  become `a`, digits become `d`, and case is folded. Spaces and punctuation
-  stay, so `ddd-dd-dddd` is an SSN shape and `aaa@aaaaaaa.aaa` is an email
-  shape. Accented and other non-ASCII characters fold to `a`. A value made
-  only of punctuation or whitespace is replaced with
-  `<punctuation or whitespace only>`.
-- **Rare format signatures are grouped.** A signature is only returned when at
-  least `MIN_SIGNATURE_COUNT` (5) non-null values share it. Rarer ones, and
-  any beyond the first 20, are counted together as `<other signatures>`. The
-  bucket's count can still be small, so it can tell you that a few values have
-  an unusual shape, but not what that shape is.
-- **Small tables give unreliable statistics**: match rates on a handful of
-  rows are noise (a single-row column is either 0.0 or 1.0).
-- **Classification is pattern-based**: regex and checksum matching will miss
-  personal identifiers written in an unusual format.
-- **Name recognition is a statistical model**: `en_core_web_sm` is English
-  only and misses some names (in a test it found 9 of 10 short names, missing
-  "María García"). It labels a column's 10,000 most frequent distinct values
-  (`NER_MAX_DISTINCT_VALUES`), so on a larger column the match rate is an
-  estimate from those values. Like the checksum functions, the model reads
-  each value inside the adapter's process; the values are not stored or
-  returned.
+- Numeric stats are withheld for small or constant columns, and `min` and
+  `max` only appear when at least 5 rows share that value.
+- Percentiles and the mean can still equal a cell value.
+- Format signatures keep spaces and punctuation, and a signature only
+  appears when at least 5 values share it.
+- Classification is pattern-based, and the name model is English only and
+  statistical.
 
-So the guarantee is "no raw row is returned and no sample is taken, small or
-constant numeric columns are withheld, and `min`, `max` and format signatures
-are only returned when several rows share them", not "no value can ever be
-inferred".
-
-## Adapters
-
-| Adapter | Status | Notes |
-|---|---|---|
-| `dataveil.adapters.duckdb.DuckDBAdapter` | Reference implementation | All 8 operations; registers Luhn/IBAN checksum UDFs, so every classifier works |
-| `dataveil.adapters.sqlmesh.SQLMeshAdapter` | First real-world integration | Reads through a model's virtual layer, writes to its physical snapshot table; registers the checksum functions on DuckDB and Postgres projects, so every classifier works there; on other engines the credit-card/IBAN classifiers are skipped |
-| `dataveil.adapters.postgres.PostgresAdapter` | Second adapter, proves the interface holds outside SQLMesh | Plain SQLAlchemy `Engine`, no Context/virtual-layer split; checksum functions written in PL/pgSQL (no Python UDFs), so every classifier works here too |
-| `dataveil.adapters.dbt.DbtAdapter` | dbt projects | Lists the models from dbt's `target/manifest.json` as `schema.alias` and runs SQL through a DuckDB or Postgres adapter on the same database, so every classifier works; dbt itself is not imported. Views cannot be cleansed, and the next `dbt run` rebuilds a cleansed table model |
-
-For a dbt project, point the adapter at the manifest that `dbt run` (or
-`dbt compile`) writes, and at the warehouse dbt built into:
-
-```python
-import duckdb
-from dataveil.adapters.dbt import DbtAdapter
-from dataveil.adapters.duckdb import DuckDBAdapter
-from dataveil.core.profile import profile_table
-
-adapter = DbtAdapter("target/manifest.json", DuckDBAdapter(duckdb.connect("shop.duckdb")))
-adapter.list_tables()  # ['main_analytics.customers', ...]
-profile_table(adapter, "main_analytics.customers")
-```
-
-Building the Postgres adapter is what caught two real dialect-coupling bugs
-in `core/`: `classify.py` was built against DuckDB's `regexp_matches()`
-returning a boolean, which doesn't hold on Postgres (there it's a
-set-returning function and can't go inside `FILTER`) — fixed by switching
-to the POSIX `~` match operator, which both engines support as a boolean
-predicate. `profile.py` used DuckDB's `QUANTILE_CONT(col, frac)` shorthand —
-fixed by switching to the ANSI-standard `PERCENTILE_CONT(frac) WITHIN GROUP
-(ORDER BY col)`, which both support. Exactly the kind of bug a second
-adapter is supposed to surface.
-
-Used by [`sqlmesh-mcp`](https://github.com/Zain-ul-Abdin45/sqlmesh-mcp)'s
-`profile_model`/`propose_cleansing_plan`/`apply_cleansing_plan` tools — the
-first integration, not the whole project. Writing a new adapter means
-implementing `dataveil.core.adapter.Adapter`'s five methods; see that
-module's docstring for the contract.
-
-### Plugins
-
-A separate package can add adapters and classifiers without changing
-dataveil. It registers them as entry points, and the built-in ones are
-registered the same way:
-
-```toml
-# the plugin package's pyproject.toml
-[project.entry-points."dataveil.adapters"]
-acme = "acme_dataveil:make_adapter"
-
-[project.entry-points."dataveil.classifiers"]
-acme = "acme_dataveil:CLASSIFIERS"
-```
-
-```python
-# acme_dataveil.py
-from dataveil.core.config import CustomClassifier
-
-CLASSIFIERS = [CustomClassifier(tag="ACME:ACCOUNT_ID", pattern="^AC[0-9]{8}$", name_hints=("account",))]
-
-def make_adapter(options):  # options: the [adapter.options] table, as strings
-    return AcmeAdapter(options["account"])
-```
-
-After `pip install acme-dataveil`, every classification includes
-`ACME:ACCOUNT_ID`, and `DATAVEIL_ADAPTER=acme` or `[adapter] kind = "acme"`
-selects the adapter.
-
-A classifier plugin provides definitions, not code: a `CustomClassifier`
-or `Classifier`, or a list of them. dataveil runs each one as the same
-aggregate `COUNT` as a built-in classifier, so a plugin can only produce
-counts. Its patterns follow the same rules as custom classifiers. A broken
-plugin, a pattern that fails those rules, or a tag that is already taken
-stops classification with an error instead of being skipped. An adapter
-plugin's factory must return an `Adapter`, and it must not reuse a
-built-in adapter name.
-
-## Audit logging and plan approval
-
-`dataveil.audit.AuditLog` is an append-only JSON-lines log — one entry per
-profile/classify/execute call, with a timestamp and enough detail to
-reconstruct what happened without re-running anything. `record()` stores
-whatever detail the caller passes: dataveil's MCP server logs row counts,
-tags and plans, not cell values, but a caller that logs a full profile also
-logs its numeric stats (see Known limits). It's a reusable component, not wired automatically into every core
-call: whichever integration drives this (sqlmesh-mcp's tools, a future
-standalone server) calls `log.record(...)` around the calls it wants logged.
-
-`dataveil.core.approval` adds an optional second gate in front of
-`execute_plan`: register a plan (`PlanRegistry.register`), get it approved
-by id (`PlanRegistry.approve`), then run it with `execute_approved_plan` —
-`confirm=True` is still required on top of that approval, not instead of
-it. Useful once this touches anything with real compliance stakes; not
-required for every caller.
-
-## Standalone MCP server
-
-With more than one adapter, dataveil can also expose itself directly as an
-MCP server, usable outside SQLMesh entirely:
-
-```bash
-pip install dataveil[duckdb,mcp]   # or [postgres,mcp] / [sqlmesh,mcp]
-```
-
-```json
-{
-  "mcpServers": {
-    "dataveil": {
-      "command": "dataveil-mcp",
-      "env": { "DATAVEIL_ADAPTER": "duckdb", "DATAVEIL_DUCKDB_PATH": "/path/to/your.duckdb" }
-    }
-  }
-}
-```
-
-`DATAVEIL_ADAPTER` selects `duckdb` / `postgres` / `sqlmesh`, each with its
-own setting: `DATAVEIL_DUCKDB_PATH` (a file path, or `:memory:`),
-`DATAVEIL_POSTGRES_URL` (a SQLAlchemy URL), or `SQLMESH_PROJECT_PATH` (same
-env var sqlmesh-mcp uses). Four tools: `list_tables`, `profile`,
-`propose_cleansing_plan`, `apply_cleansing_plan` (requires `confirm=true`,
-`destructiveHint`) -- the same three-tool shape as sqlmesh-mcp's
-dataveil-backed tools, just against `table` instead of `model_name`, since
-there's no SQLMesh Context or physical-snapshot concept here.
-
-## Configuration
-
-Settings live in a `dataveil.toml` file. dataveil reads the file named by
-`DATAVEIL_CONFIG`, or `./dataveil.toml` if that variable is not set. Without
-a file, the defaults below apply. Every section and key is optional.
-
-```toml
-[profile]
-min_signature_count = 5               # can only be raised
-min_extreme_count = 5                 # can only be raised
-min_rows_for_numeric_stats = 10       # can only be raised
-min_distinct_for_numeric_stats = 3    # can only be raised
-max_format_signatures = 20            # can only be lowered
-
-[classify]
-match_threshold = 0.8                 # share of values that must match
-name_hint_threshold = 0.5             # lower bar when the column name hints at the tag
-ner_max_distinct_values = 10000       # values the name model labels per column
-disabled = []                         # built-in tags to skip, e.g. ["PII:PHONE"]
-
-[[classify.custom]]                   # your own identifiers; repeat for more
-tag = "PII:CUSTOMER_ID"
-pattern = "^CUS-[0-9]{8}$"
-name_hints = ["customer_id", "cust_no"]  # optional
-
-[adapter]                             # used by dataveil-mcp
-kind = "duckdb"                       # "duckdb", "postgres", "sqlmesh" or a plugin
-duckdb_path = "warehouse.duckdb"
-postgres_url = "postgresql+psycopg2://localhost/analytics"
-sqlmesh_project_path = "path/to/project"
-
-[adapter.options]                     # passed to an adapter plugin, see Plugins
-account = "acme"
-
-[audit]
-log_path = ".dataveil/audit.jsonl"
-```
-
-The privacy thresholds can only be made stricter. A value that would make
-the profile reveal more, such as `min_signature_count = 2`, is rejected
-when the file is loaded. Unknown sections, keys and tags are also errors,
-so a typo cannot silently fall back to a default.
-
-A custom classifier runs like the built-in regexes: one aggregate `COUNT`
-per column, with the same thresholds. Its tag cannot reuse a built-in one.
-Patterns are checked when the file is loaded, and must work the same on
-DuckDB and Postgres. So a pattern must be anchored with `^` and `$`, and
-may not use lookarounds, inline flags, named groups, backreferences, or
-`\b`, `\A` and `\Z`.
-
-The environment variables of the MCP server take precedence over
-`[adapter]` and `[audit]`. Keep credentials out of the file and pass a
-Postgres URL with a password in `DATAVEIL_POSTGRES_URL`.
-
-In library code, load the file and pass its sections explicitly:
-
-```python
-from dataveil.config import load_config
-
-config = load_config()
-profile_table(adapter, "customers", config.profile)
-classify_table(adapter, "customers", config.classify)
-```
+So the guarantee is "no raw row is returned and no sample is taken", not "no
+value can ever be inferred". The [privacy page](https://zain-ul-abdin45.github.io/dataveil/privacy/) lists
+every limit in full.
 
 ## Development
 
@@ -411,6 +175,13 @@ make check    # lint, format check, mypy, tests (same as CI)
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the design rules and the pull
 request process, and [SECURITY.md](SECURITY.md) to report a privacy leak.
+
+To build the documentation locally:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve
+```
 
 The `sqlmesh` extra pulls in real SQLMesh; `tests/test_sqlmesh_adapter.py`
 runs the `SQLMeshAdapter` end to end against a small, self-contained SQLMesh
